@@ -22,7 +22,14 @@ function localApi(): Plugin {
           const response: Response = await handler(request);
           res.statusCode = response.status;
           response.headers.forEach((v, k) => res.setHeader(k, v));
-          res.end(Buffer.from(await response.arrayBuffer()));
+          if (!response.body) return res.end();
+          const reader = response.body.getReader();
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            res.write(value);
+          }
+          res.end();
         } catch (e) {
           console.error(e);
           res.statusCode = 404;

@@ -19,6 +19,7 @@
   },
   "homepage": "https://github.com/a20978236-coder/Hollow#readme",
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.4.0",
     "three": "^0.180.0"
   },
   "devDependencies": {

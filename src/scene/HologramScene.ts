@@ -11,6 +11,15 @@ const BLUE = new THREE.Color('#29b6ff');
 const CHARACTER_HEIGHT = 1.8;
 
 export type Quality = 'high' | 'low';
+export type AssistantState = 'idle' | 'listening' | 'thinking' | 'speaking';
+
+// Each assistant state has its own color and energy so you can tell at a glance what HOLLOW is doing.
+const STATE_LOOK: Record<AssistantState, { color: THREE.Color; spin: number; scan: number; energy: number }> = {
+  idle: { color: new THREE.Color('#29b6ff'), spin: 1, scan: 1, energy: 0 },
+  listening: { color: new THREE.Color('#4ff0ff'), spin: 1.6, scan: 0.6, energy: 0.25 },
+  thinking: { color: new THREE.Color('#5a7dff'), spin: 5, scan: 3.5, energy: 0.45 },
+  speaking: { color: new THREE.Color('#3cc4ff'), spin: 2, scan: 1.5, energy: 0.3 },
+};
 
 export class HologramScene {
   readonly renderer: THREE.WebGLRenderer;
@@ -28,7 +37,19 @@ export class HologramScene {
   private beam!: THREE.Mesh;
   private reveal = 0;
   private revealTarget = 0;
-  private activity = 0; // 0..1, drives glow pulses (used by voice later)
+  private activity = 0; // 0..1, extra glow (boot sequence)
+  private state: AssistantState = 'idle';
+  private level = 0; // live audio level 0..1 (mic while listening, voice while speaking)
+  private smoothLevel = 0;
+  private energy = 0;
+  private spin = 1;
+  private scanTime = 0;
+  private scanSpeed = 1;
+  private color = BLUE.clone();
+  private core!: THREE.Group;
+  private coreGlow!: THREE.Sprite;
+  private coreSphere!: THREE.Mesh;
+  private ringMats: THREE.MeshBasicMaterial[] = [];
   private quality: Quality = 'high';
   private lastFrame = 0;
   fps = 0;
@@ -60,6 +81,7 @@ export class HologramScene {
     this.composer.addPass(new OutputPass());
 
     this.buildProjector();
+    this.buildCore();
     this.scene.add(this.character);
 
     this.resize();
@@ -96,6 +118,19 @@ export class HologramScene {
     });
     this.character.add(model);
 
+    // Mount the energy core in the chest so it moves with the body.
+    let chest: THREE.Object3D | undefined;
+    model.traverse((o) => { if (!chest && /spine2|spine1|chest/i.test(o.name)) chest = o; });
+    if (chest) {
+      const worldScale = new THREE.Vector3();
+      chest.getWorldScale(worldScale);
+      this.core.scale.setScalar(1 / worldScale.x);
+      this.core.position.set(0, 0.08 / worldScale.y, 0.13 / worldScale.z);
+      chest.add(this.core);
+    } else {
+      this.core.position.set(0, 1.35, 0.15);
+    }
+
     if (gltf.animations.length) {
       this.mixer = new THREE.AnimationMixer(model);
       const idle = gltf.animations.find((a) => /idle/i.test(a.name)) ?? gltf.animations[0];
@@ -108,6 +143,36 @@ export class HologramScene {
   dematerialize() { this.revealTarget = 0; }
 
   setActivity(level: number) { this.activity = THREE.MathUtils.clamp(level, 0, 1); }
+
+  /** What HOLLOW is doing right now: drives color, motion and the energy core. */
+  setState(state: AssistantState) { this.state = state; if (state === 'idle') this.level = 0; }
+
+  /** Live audio level (0..1) from the microphone or HOLLOW's voice. */
+  setLevel(level: number) { this.level = THREE.MathUtils.clamp(level, 0, 1); }
+
+  private buildCore() {
+    this.core = new THREE.Group();
+    this.coreSphere = new THREE.Mesh(
+      new THREE.SphereGeometry(0.035, 24, 16),
+      new THREE.MeshBasicMaterial({ color: 0xbff4ff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }),
+    );
+    const c = document.createElement('canvas');
+    c.width = c.height = 128;
+    const g = c.getContext('2d')!;
+    const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+    grad.addColorStop(0, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.2, 'rgba(120,220,255,0.8)');
+    grad.addColorStop(1, 'rgba(41,182,255,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 128, 128);
+    this.coreGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: new THREE.CanvasTexture(c), color: BLUE, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    this.coreGlow.scale.setScalar(0.32);
+    this.core.add(this.coreSphere, this.coreGlow);
+    this.core.position.set(0, 1.35, 0.15);
+    this.scene.add(this.core);
+  }
 
   setQuality(q: Quality) {
     this.quality = q;
@@ -133,13 +198,12 @@ export class HologramScene {
       const geo = d.dashed
         ? new THREE.RingGeometry(d.r, d.r + d.w * 4, 64, 1, 0, Math.PI * 1.6)
         : new THREE.RingGeometry(d.r, d.r + d.w, 96);
-      const ring = new THREE.Mesh(
-        geo,
-        new THREE.MeshBasicMaterial({
-          color: BLUE, transparent: true, opacity: d.o,
-          blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false,
-        }),
-      );
+      const mat = new THREE.MeshBasicMaterial({
+        color: BLUE.clone(), transparent: true, opacity: d.o,
+        blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false,
+      });
+      this.ringMats.push(mat);
+      const ring = new THREE.Mesh(geo, mat);
       ring.rotation.x = -Math.PI / 2;
       ring.position.y = 0.005;
       this.rings.push(ring);
@@ -152,7 +216,7 @@ export class HologramScene {
     this.beam = new THREE.Mesh(
       beamGeo,
       new THREE.ShaderMaterial({
-        uniforms: { uColor: { value: BLUE }, uStrength: { value: 0.0 } },
+        uniforms: { uColor: { value: BLUE.clone() }, uStrength: { value: 0.0 } },
         vertexShader: `varying float vY; varying vec3 vN; varying vec3 vV;
           void main(){ vY = position.y / 2.3; vec4 mv = modelViewMatrix * vec4(position,1.0);
           vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }`,
@@ -210,30 +274,59 @@ export class HologramScene {
     // Linear ~2.5 s materialize / dematerialize.
     const step = dt / 2.5;
     this.reveal = this.revealTarget > this.reveal ? Math.min(this.revealTarget, this.reveal + step) : Math.max(this.revealTarget, this.reveal - step);
-    const pulse = 1 + this.activity * 0.6 + Math.sin(t * 2) * 0.04;
+    // Ease toward the current state's look.
+    const look = STATE_LOOK[this.state];
+    const k = Math.min(1, dt * 4);
+    this.color.lerp(look.color, k);
+    this.spin += (look.spin - this.spin) * k;
+    this.scanSpeed += (look.scan - this.scanSpeed) * k;
+    this.energy += (look.energy - this.energy) * k;
+    this.smoothLevel += (this.level - this.smoothLevel) * Math.min(1, dt * (this.level > this.smoothLevel ? 25 : 8));
+    this.scanTime += dt * this.scanSpeed;
+
+    const thinkingPulse = this.state === 'thinking' ? (Math.sin(t * 9) * 0.5 + 0.5) * 0.35 : 0;
+    const voice = this.smoothLevel * (this.state === 'speaking' ? 0.35 : 0.2);
+    const pulse = 1 + this.activity * 0.6 + this.energy * 0.2 + voice + thinkingPulse * 0.6 + Math.sin(t * 2) * 0.04;
 
     for (const m of this.holoMaterials) {
-      m.uniforms.uTime.value = t;
+      m.uniforms.uTime.value = this.scanTime;
       m.uniforms.uReveal.value = this.reveal;
       m.uniforms.uIntensity.value = pulse;
+      (m.uniforms.uColor.value as THREE.Color).copy(this.color);
     }
+    for (const m of this.ringMats) m.color.copy(this.color);
+    (this.particles.material as THREE.PointsMaterial).color.copy(this.color);
+
+    // Energy core: breathes when idle, flickers with thought, throbs with the voice.
+    const coreScale = 1 + Math.sin(t * 2.2) * 0.08 + thinkingPulse * 1.2 + this.smoothLevel * 1.6;
+    this.coreGlow.scale.setScalar(0.32 * coreScale);
+    this.coreSphere.scale.setScalar(0.8 + this.smoothLevel * 0.8 + thinkingPulse);
+    (this.coreGlow.material as THREE.SpriteMaterial).color.copy(this.color);
+    (this.coreGlow.material as THREE.SpriteMaterial).opacity = this.reveal * (0.75 + this.smoothLevel * 0.25);
+    (this.coreSphere.material as THREE.MeshBasicMaterial).opacity = this.reveal;
     this.mixer?.update(dt);
     // Subtle "alive" sway on top of the idle animation.
     this.character.rotation.y = Math.sin(t * 0.35) * 0.08;
 
-    this.rings.forEach((r, i) => (r.rotation.z += dt * (i % 2 ? -0.25 : 0.4) * (1 + this.activity)));
-    (this.beam.material as THREE.ShaderMaterial).uniforms.uStrength.value = 0.25 + this.reveal * 0.75 + this.activity;
+    this.rings.forEach((r, i) => {
+      r.rotation.z += dt * (i % 2 ? -0.25 : 0.4) * (1 + this.activity) * this.spin;
+      // Rings ripple outward with the live audio level.
+      r.scale.setScalar(1 + this.smoothLevel * (0.06 + i * 0.03));
+    });
+    const beamMat = this.beam.material as THREE.ShaderMaterial;
+    beamMat.uniforms.uStrength.value = 0.25 + this.reveal * 0.75 + this.activity + this.energy * 0.25 + this.smoothLevel * 0.2;
+    (beamMat.uniforms.uColor.value as THREE.Color).copy(this.color);
 
     const p = this.particles.geometry.attributes.position as THREE.BufferAttribute;
     for (let i = 0; i < p.count; i++) {
-      let y = p.getY(i) + dt * (0.12 + (i % 7) * 0.03);
+      let y = p.getY(i) + dt * (0.12 + (i % 7) * 0.03) * (1 + this.energy * 3);
       if (y > 2.6) y = 0;
       p.setY(i, y);
     }
     p.needsUpdate = true;
 
     this.controls.update();
-    this.bloom.strength = this.quality === 'high' ? 0.75 + this.activity * 0.6 : 0;
+    this.bloom.strength = this.quality === 'high' ? 0.75 + this.activity * 0.6 + this.smoothLevel * 0.25 + thinkingPulse * 0.5 : 0;
     if (this.quality === 'high') this.composer.render();
     else this.renderer.render(this.scene, this.camera);
   }

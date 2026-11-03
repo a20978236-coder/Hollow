@@ -22,7 +22,7 @@
       <header class="topbar">
         <div class="brand">
           <span class="logo">HOLLOW</span>
-          <span class="sub">HOLOGRAPHIC ASSISTANT · v0.1</span>
+          <span class="sub">HOLOGRAPHIC ASSISTANT · v0.2</span>
         </div>
         <div class="clock" id="clock">--:--:--</div>
       </header>
@@ -31,28 +31,31 @@
         <div class="status" data-status="render" data-state="busy"><span class="dot"></span><span class="label">RENDER</span><span class="value">LOADING</span></div>
         <div class="status" data-status="server" data-state="off"><span class="dot"></span><span class="label">SERVER</span><span class="value">STANDBY</span></div>
         <div class="status" data-status="ai" data-state="off"><span class="dot"></span><span class="label">AI CORE</span><span class="value">STANDBY</span></div>
-        <div class="status" data-status="voice" data-state="off"><span class="dot"></span><span class="label">VOICE</span><span class="value">NOT BUILT</span></div>
+        <div class="status" data-status="voice" data-state="off"><span class="dot"></span><span class="label">VOICE</span><span class="value">STANDBY</span></div>
       </section>
 
       <div class="hud-deco left"><div class="bars"></div><div class="readout" id="readout-left"></div></div>
       <div class="hud-deco right"><div class="arc"></div><div class="readout" id="readout-right"></div></div>
 
       <main id="screen-holo" class="screen active">
+        <div class="caption" id="caption" hidden><span class="who" id="caption-who"></span><span id="caption-text"></span></div>
         <div class="center-msg" id="center-msg">TAP CONNECT TO INITIALIZE</div>
         <div class="controls">
           <button id="connect" class="connect"><span>CONNECT</span></button>
-          <button id="mic" class="mic" disabled aria-label="Microphone (not built yet)">
+          <button id="mic" class="mic" disabled aria-label="Talk to HOLLOW">
+            <span class="mic-ring"></span>
             <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V22h2v-3.08A7 7 0 0 0 19 12h-2Z"/></svg>
           </button>
         </div>
       </main>
 
       <section id="screen-chat" class="screen panel">
-        <h2>CONVERSATION</h2>
-        <div class="notice">
-          <p><b>Not built yet.</b> This screen will show your conversation with HOLLOW once the AI brain is connected (Step 2).</p>
-          <p>Nothing here is simulated — HOLLOW will not pretend to answer until a real AI model is wired up.</p>
-        </div>
+        <h2>CONVERSATION <span class="state-tag" id="chat-state">IDLE</span></h2>
+        <div class="messages" id="messages"></div>
+        <form class="composer" id="composer" autocomplete="off">
+          <input id="chat-input" type="text" placeholder="Type a message to HOLLOW…" enterkeyhint="send" />
+          <button type="submit" id="chat-send">SEND</button>
+        </form>
       </section>
 
       <section id="screen-settings" class="screen panel">
@@ -60,6 +63,16 @@
         <label class="row"><span>Hologram quality<small>Low disables the glow effect for older iPhones</small></span>
           <select id="set-quality"><option value="high">High</option><option value="low">Low</option></select></label>
         <label class="row"><span>Sound effects</span><input type="checkbox" id="set-sfx" checked /></label>
+        <label class="row"><span>Your name<small>How HOLLOW addresses you</small></span><input type="text" id="set-name" class="text" placeholder="optional" /></label>
+        <label class="row"><span>Speak replies aloud</span><input type="checkbox" id="set-voice-replies" checked /></label>
+        <label class="row"><span>Hands-free conversation<small>Listen again automatically after HOLLOW answers</small></span><input type="checkbox" id="set-handsfree" checked /></label>
+        <label class="row"><span>Voice<small>Realistic needs an ElevenLabs key on the server</small></span>
+          <select id="set-voice"><option value="auto">Auto</option><option value="realistic">Realistic (ElevenLabs)</option><option value="device">iPhone voice</option></select></label>
+        <label class="row"><span>Access code<small>Only if you set HOLLOW_ACCESS_CODE in Vercel</small></span><input type="password" id="set-code" class="text" placeholder="none" /></label>
+        <div class="row info"><span>Voice output</span><b id="info-tts">–</b></div>
+        <div class="row info"><span>Voice input</span><b id="info-stt">–</b></div>
+        <div class="row info"><span>Memory</span><b id="info-memory">–</b></div>
+        <div class="row"><span>Erase conversation memory</span><button id="clear-memory" class="small danger">CLEAR</button></div>
         <div class="row info"><span>Frame rate</span><b id="info-fps">–</b></div>
         <div class="row info"><span>Backend</span><b id="info-server">not checked</b></div>
         <div class="row info"><span>AI key on server</span><b id="info-ai">not checked</b></div>

@@ -97,3 +97,40 @@ body { font-family: 'Rajdhani', system-ui, sans-serif; -webkit-user-select: none
 .tabs button { flex: 1; font-family: 'Orbitron', sans-serif; font-size: 11px; letter-spacing: 3px; padding: 11px 0;
   color: var(--blue); background: rgba(0, 20, 40, 0.55); border: 1px solid var(--blue-faint); }
 .tabs button.active { border-color: var(--blue); background: rgba(41, 182, 255, 0.15); text-shadow: 0 0 8px var(--blue); }
+
+/* ---- v0.2: conversation ---- */
+.caption { pointer-events: auto; max-width: 100%; max-height: 22vh; overflow-y: auto; margin-bottom: 10px; padding: 10px 14px;
+  font-size: 17px; line-height: 1.35; text-align: center; color: #e6f7ff; background: rgba(0, 10, 22, 0.72);
+  border: 1px solid var(--blue-faint); border-left: 2px solid var(--blue); -webkit-user-select: text; user-select: text; }
+.caption .who { display: block; font-family: 'Orbitron', sans-serif; font-size: 9px; letter-spacing: 3px; color: var(--blue); margin-bottom: 4px; }
+.caption.user { color: #bfe9ff; font-style: italic; }
+.caption.system { color: var(--blue); font-size: 14px; letter-spacing: 1px; }
+.caption.error { color: #ffb4a8; border-left-color: #ff6b57; }
+
+.mic { position: relative; }
+.mic-ring { position: absolute; inset: -6px; border-radius: 50%; border: 2px solid var(--blue); opacity: 0;
+  transform: scale(calc(1 + var(--lvl, 0) * 0.6)); transition: transform 60ms linear; pointer-events: none; }
+.mic[data-state='listening'] { background: rgba(79, 240, 255, 0.25); color: #eaffff; border-color: #4ff0ff; box-shadow: 0 0 24px #4ff0ff; }
+.mic[data-state='listening'] .mic-ring { opacity: 0.9; border-color: #4ff0ff; }
+.mic[data-state='thinking'] .mic-ring { opacity: 0.8; border-style: dashed; border-color: #5a7dff; animation: spin 1s linear infinite; }
+.mic[data-state='speaking'] .mic-ring { opacity: 0.7; }
+
+.panel h2 { display: flex; justify-content: space-between; align-items: center; }
+.state-tag { font-size: 10px; letter-spacing: 2px; color: var(--ok); }
+.messages { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-bottom: 8px; -webkit-overflow-scrolling: touch; }
+.msg { max-width: 86%; padding: 9px 12px; font-size: 16px; line-height: 1.4; white-space: pre-wrap; word-wrap: break-word;
+  -webkit-user-select: text; user-select: text; }
+.msg.user { align-self: flex-end; background: rgba(41, 182, 255, 0.16); border: 1px solid var(--blue-dim); }
+.msg.assistant { align-self: flex-start; background: rgba(0, 25, 50, 0.6); border: 1px solid var(--blue-faint); border-left: 2px solid var(--blue); }
+.msg .meta { display: block; font-family: 'Orbitron', sans-serif; font-size: 8px; letter-spacing: 2px; opacity: 0.55; margin-bottom: 3px; }
+.msg.pending::after { content: '▍'; animation: blink 0.6s infinite alternate; color: var(--blue); }
+.empty { opacity: 0.6; text-align: center; margin-top: 30px; font-size: 15px; }
+.composer { display: flex; gap: 8px; padding-top: 8px; border-top: 1px solid var(--blue-faint); }
+.composer input { flex: 1; min-width: 0; font: 16px 'Rajdhani', sans-serif; color: var(--text); background: #001226;
+  border: 1px solid var(--blue-dim); padding: 10px; -webkit-user-select: text; user-select: text; }
+.composer button, button.small { font-family: 'Orbitron', sans-serif; font-size: 11px; letter-spacing: 2px; color: var(--blue);
+  background: rgba(41, 182, 255, 0.12); border: 1px solid var(--blue); padding: 0 14px; }
+button.small { padding: 8px 14px; }
+button.danger { color: #ff8a78; border-color: #ff8a78; background: rgba(255, 107, 87, 0.08); }
+.row input.text { width: 45%; font: 16px 'Rajdhani', sans-serif; color: var(--text); background: #001a33; border: 1px solid var(--blue-dim);
+  padding: 6px 8px; -webkit-user-select: text; user-select: text; }
