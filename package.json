@@ -1,0 +1,32 @@
+{
+  "name": "hollow",
+  "version": "1.0.0",
+  "description": "HOLLOW - holographic AI assistant (iPhone-first web app)",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/a20978236-coder/Hollow.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/a20978236-coder/Hollow/issues"
+  },
+  "homepage": "https://github.com/a20978236-coder/Hollow#readme",
+  "dependencies": {
+    "three": "^0.180.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/three": "^0.180.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5"
+  },
+  "private": true,
+  "type": "module"
+}
