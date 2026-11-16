@@ -1,0 +1,623 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CHAOS CREW intro</title>
+<style>
+  @font-face { font-family: "Bangers"; src: url("fonts/Bangers.ttf"); }
+  html, body { margin: 0; background: #000; }
+  canvas { display: block; }
+</style>
+<canvas id="c"></canvas>
+<script src="lipsync.js"></script>
+<script>
+// CHAOS CREW — 15 s YouTube intro. Characters are cutouts of the supplied artwork (layers/*.png), never repainted.
+const W = 1920, H = 1080, FPS = 30, DURATION = 15;
+window.PIECE = { width: W, height: H, fps: FPS, duration: DURATION };
+const TL = {luck: 0.55, hollow: 2.40, light: 3.20, echo: 4.48, beat: 5.60, music: 6.00, sprint: 6.10,
+  boom: 7.20, launch: 7.60, shot2: 9.00, hit: 11.60, slide: 12.00, title: 14.00, end: 15.00};
+const LINES = {luck: "What is that ticking noise?", hollow: "RUN!", light: "Why?", echo: "Because we set off a bomb!"};
+
+const canvas = document.getElementById("c");
+canvas.width = W; canvas.height = H;
+const ctx = canvas.getContext("2d");
+
+const rng = (seed) => () => {
+  seed = (seed + 0x6d2b79f5) | 0;
+  let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+};
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const prog = (t, a, b) => clamp((t - a) / (b - a));
+const easeOut = (x) => 1 - (1 - x) ** 3;
+const easeIn = (x) => x * x * x;
+const easeInOut = (x) => (x < 0.5 ? 4 * x ** 3 : 1 - (-2 * x + 2) ** 3 / 2);
+const lerp = (a, b, x) => a + (b - a) * x;
+const spring = (x, k = 9, d = 5) => x <= 0 ? 0 : 1 - Math.exp(-d * x) * Math.cos(k * x);  // overshooting 0->1
+const layer = (w = W, h = H) => Object.assign(document.createElement("canvas"), { width: w, height: h });
+const load = (src) => new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = src; });
+const hash = (n) => { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); };
+
+// ---------------- characters: @2x cutouts, mouth anchors in layer px ----------------
+const NAMES = ["echo", "luck", "hollow", "light"];
+const MOUTH = { echo: [284, 163, 46, 30], luck: [456, 268, 54, 50], light: [366, 330, 78, 54] };
+const EYES = { hollow: [202, 276] };
+const FACE = { echo: [284, 150], luck: [456, 240], hollow: [202, 260], light: [366, 300] };   // for FX placement
+// stage: bottom-centre anchor, scale relative to @2x layer
+const BASE = { echo: {x: 305, y: 880, s: 0.64}, luck: {x: 700, y: 990, s: 0.64},
+               hollow: {x: 1262, y: 990, s: 0.64}, light: {x: 1600, y: 990, s: 0.64} };
+const IMG = {};
+let BG, FG, LOG, SMOKE = [], SPARKS = [], DEBRIS = [], STARS = [], STREAKS = [];
+
+// ---------------- ticks (same formula as sound.py) ----------------
+const TICKS = [];
+{ let t = 0.15, k = 0; while (t < TL.beat - 0.05) { TICKS.push(t); const p = t / TL.beat; t += 0.42 * (1 - 0.83 * p ** 1.2); k++; } }
+const tickPulse = (t) => { let best = 0; for (const tk of TICKS) if (t >= tk) best = Math.max(best, Math.exp(-(t - tk) * 14)); return t < TL.beat ? best : 0; };
+
+// ---------------- painting helpers ----------------
+function pine(g, x, y, h, w, col) {
+  g.fillStyle = col; g.beginPath();
+  const tiers = 5;
+  for (let i = 0; i < tiers; i++) {
+    const ty = y - h + (h * i) / tiers, by = ty + h / tiers * 1.6, ww = w * (0.35 + 0.65 * (i + 1) / tiers);
+    g.moveTo(x, ty); g.lineTo(x + ww / 2, by); g.lineTo(x - ww / 2, by); g.closePath();
+  }
+  g.fill(); g.fillRect(x - w * 0.05, y - h * 0.05, w * 0.1, h * 0.12);
+}
+function puff(g, x, y, r, col, a = 1, seed = 1, lumps = 7) {
+  g.save(); g.globalAlpha *= a; g.fillStyle = col; g.beginPath();
+  for (let i = 0; i < lumps; i++) {
+    const ang = (i / lumps) * Math.PI * 2 + hash(seed + i) * 0.6;
+    const rr = r * (0.45 + 0.3 * hash(seed * 3 + i));
+    g.moveTo(x + Math.cos(ang) * r * 0.5 + rr, y + Math.sin(ang) * r * 0.45);
+    g.arc(x + Math.cos(ang) * r * 0.5, y + Math.sin(ang) * r * 0.45, rr, 0, Math.PI * 2);
+  }
+  g.moveTo(x + r * 0.7, y); g.arc(x, y, r * 0.7, 0, Math.PI * 2);
+  g.fill(); g.restore();
+}
+function star(g, x, y, r, rot, col) {
+  g.save(); g.translate(x, y); g.rotate(rot); g.fillStyle = col; g.beginPath();
+  for (let i = 0; i < 10; i++) { const rr = i % 2 ? r * 0.45 : r; const a = (i / 10) * Math.PI * 2 - Math.PI / 2; g.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+  g.closePath(); g.fill(); g.lineWidth = r * 0.18; g.strokeStyle = "#1a1030"; g.stroke(); g.restore();
+}
+function comicText(g, text, x, y, size, fill, rot = 0, scale = 1, outline = "#0b0b18") {
+  g.save(); g.translate(x, y); g.rotate(rot); g.scale(scale, scale);
+  g.font = `${size}px Bangers`; g.textAlign = "center"; g.textBaseline = "middle";
+  g.lineJoin = "round"; g.lineWidth = size * 0.22; g.strokeStyle = outline; g.strokeText(text, 0, 0);
+  g.lineWidth = size * 0.1; g.strokeStyle = "#ffffff"; g.strokeText(text, 0, 0);
+  g.fillStyle = fill; g.fillText(text, 0, 0); g.restore();
+}
+
+// ---------------- ready: paint static layers once ----------------
+window.ready = (async () => {
+  await document.fonts.load('80px "Bangers"'); await document.fonts.ready;
+  for (const n of NAMES) IMG[n] = await load(`layers/${n}@2x.png`);
+  IMG.title = await load("layers/title@2x.png");
+  IMG.moon = await load("layers/moon.png");
+  for (const n of NAMES) {  // silhouettes for the impact frame
+    const c = layer(IMG[n].width, IMG[n].height), g = c.getContext("2d");
+    g.drawImage(IMG[n], 0, 0); g.globalCompositeOperation = "source-in"; g.fillStyle = "#07060d"; g.fillRect(0, 0, c.width, c.height);
+    IMG[n + "_sil"] = c;
+  }
+  const R = rng(42);
+  // night forest background in the reference palette
+  BG = layer(); const b = BG.getContext("2d");
+  const sky = b.createLinearGradient(0, 0, 0, 820);
+  sky.addColorStop(0, "#050817"); sky.addColorStop(0.55, "#0e1a52"); sky.addColorStop(1, "#1d2f86");
+  b.fillStyle = sky; b.fillRect(0, 0, W, H);
+  for (let i = 0; i < 160; i++) { b.fillStyle = `rgba(200,220,255,${0.3 + 0.6 * R()})`; b.beginPath(); b.arc(R() * W, R() * 520, 0.6 + R() * 1.8, 0, 7); b.fill(); }
+  const glow = b.createRadialGradient(1450, 170, 20, 1450, 170, 420); glow.addColorStop(0, "rgba(150,190,255,0.35)"); glow.addColorStop(1, "rgba(150,190,255,0)");
+  b.fillStyle = glow; b.fillRect(0, 0, W, H);
+  b.drawImage(IMG.moon, 1450 - 95, 170 - 95, 190, 190);
+  for (let i = 0; i < 26; i++) pine(b, -40 + i * 80 + R() * 40, 700 + R() * 40, 380 + R() * 200, 170 + R() * 60, "#0b1640");
+  for (let i = 0; i < 16; i++) pine(b, -60 + i * 135 + R() * 60, 780 + R() * 30, 460 + R() * 220, 230 + R() * 70, "#081030");
+  const mist = b.createLinearGradient(0, 600, 0, 820); mist.addColorStop(0, "rgba(60,90,200,0)"); mist.addColorStop(1, "rgba(60,90,200,0.35)");
+  b.fillStyle = mist; b.fillRect(0, 600, W, 220);
+  const gr = b.createLinearGradient(0, 780, 0, H); gr.addColorStop(0, "#132a3a"); gr.addColorStop(1, "#06101a");
+  b.fillStyle = gr; b.beginPath(); b.moveTo(0, 800); b.quadraticCurveTo(960, 760, W, 800); b.lineTo(W, H); b.lineTo(0, H); b.fill();
+  for (let i = 0; i < 500; i++) { const x = R() * W, y = 790 + R() * 290; b.strokeStyle = `rgba(${40 + R() * 40},${90 + R() * 70},${70 + R() * 40},0.8)`; b.lineWidth = 2; b.beginPath(); b.moveTo(x, y); b.lineTo(x + (R() - 0.5) * 10, y - 8 - R() * 14); b.stroke(); }
+  // Echo's log (she sits on one in the reference)
+  LOG = layer(520, 160); const l = LOG.getContext("2d");
+  const lg = l.createLinearGradient(0, 20, 0, 150); lg.addColorStop(0, "#7a4527"); lg.addColorStop(0.5, "#4a2614"); lg.addColorStop(1, "#24110a");
+  l.fillStyle = lg; l.strokeStyle = "#140805"; l.lineWidth = 6; l.beginPath(); l.roundRect(10, 30, 470, 110, 50); l.fill(); l.stroke();
+  l.fillStyle = "#b8774a"; l.beginPath(); l.ellipse(470, 85, 32, 54, 0, 0, 7); l.fill(); l.stroke();
+  l.strokeStyle = "#6e3b1f"; l.lineWidth = 4; for (let r = 10; r < 50; r += 12) { l.beginPath(); l.ellipse(470, 85, r * 0.6, r, 0, 0, 7); l.stroke(); }
+  l.strokeStyle = "rgba(20,8,4,0.7)"; l.lineWidth = 4; for (let i = 0; i < 12; i++) { const x = 40 + R() * 380; l.beginPath(); l.moveTo(x, 45 + R() * 20); l.lineTo(x + 40 + R() * 40, 60 + R() * 60); l.stroke(); }
+  l.fillStyle = "rgba(120,170,255,0.18)"; l.fillRect(20, 34, 450, 10);
+  // foreground bushes/grass hiding the bottom edge of every cutout
+  FG = layer(); const f = FG.getContext("2d");
+  for (let i = 0; i < 46; i++) { const x = i * 44 + R() * 30, y = 905 + R() * 40; puff(f, x, y + 60, 60 + R() * 40, "#0a1a22", 1, i + 9); }
+  for (let i = 0; i < 46; i++) { const x = i * 44 + R() * 30, y = 905 + R() * 40; puff(f, x, y + 30, 38 + R() * 24, "#10283a", 1, i + 99); }
+  f.fillStyle = "#081219"; f.fillRect(0, 990, W, 90);
+  for (let i = 0; i < 380; i++) { const x = R() * W, y = 900 + R() * 180; f.strokeStyle = `rgba(${60 + R() * 60},${140 + R() * 80},${200 + R() * 55},${0.25 + R() * 0.4})`; f.lineWidth = 2.4; f.beginPath(); f.moveTo(x, y); f.quadraticCurveTo(x + 4, y - 14, x + (R() - 0.5) * 16, y - 22 - R() * 22); f.stroke(); }
+  // explosion particles
+  for (let i = 0; i < 46; i++) SMOKE.push({a: R() * Math.PI * 2, d: 0.25 + R() * 0.8, r: 70 + R() * 120, s: R(), col: R()});
+  for (let i = 0; i < 90; i++) SPARKS.push({a: -Math.PI * R(), v: 700 + R() * 1500, l: 30 + R() * 70, hue: R()});
+  for (let i = 0; i < 22; i++) DEBRIS.push({a: -0.2 - R() * 2.7, v: 600 + R() * 900, spin: (R() - 0.5) * 18, sz: 14 + R() * 30, kind: R()});
+  for (let i = 0; i < 70; i++) STREAKS.push({a: R() * Math.PI * 2, s: R(), w: 2 + R() * 6, sp: 0.6 + R()});
+  for (let i = 0; i < 40; i++) STARS.push({a: R() * Math.PI * 2, d: R(), s: R()});
+})();
+
+// ---------------- lipsync ----------------
+function mouthOpen(name, t) {
+  const L = window.LIPS && window.LIPS[name]; if (!L) return null;
+  const f = (t - L.start) * FPS; if (f < -1 || f > L.env.length + 2) return null;
+  const i = Math.floor(f), a = f - i, e = (k) => L.env[clamp(k, 0, L.env.length - 1)] || 0;
+  return lerp(e(i), e(i + 1), a);
+}
+const work = layer(800, 1000), wg = work.getContext("2d");
+const mcan = layer(300, 260), mg = mcan.getContext("2d");
+// Returns the character image for this frame, with the mouth region stretched by speech (the drawing itself is untouched).
+function charImage(name, t, silhouette = false) {
+  if (silhouette) return IMG[name + "_sil"];
+  const img = IMG[name], m = MOUTH[name], open = mouthOpen(name, t);
+  if (!m || open === null) return img;
+  // The art's mouths are already open, so speech only opens them wider: rows below the upper lip are stretched
+  // downward (jaw drop) inside a feathered ellipse, then the image returns exactly to the original drawing.
+  const [cx, cy, rx, ry] = m, sy = 1 + (name === "echo" ? 0.3 : 0.5) * clamp(open);
+  work.width = img.width; work.height = img.height; wg.drawImage(img, 0, 0);
+  if (sy < 1.01) return work;
+  const bw = Math.round(rx * 2.6), bh = Math.round(ry * 3.2), x0 = Math.round(cx - bw / 2), y0 = Math.round(cy - bh / 2);
+  const lip = Math.round(ry * 0.55);                      // upper-lip row inside the box
+  mcan.width = bw; mcan.height = bh;
+  mg.drawImage(img, x0, y0, bw, bh, 0, 0, bw, bh);
+  mg.drawImage(img, x0, y0 + lip, bw, bh - lip, 0, lip, bw, (bh - lip) * sy);
+  mg.globalCompositeOperation = "destination-in";
+  mg.save(); mg.translate(bw / 2, bh / 2 + ry * 0.2); mg.scale(1, (ry * 1.35) / (rx * 1.2));
+  const rg = mg.createRadialGradient(0, 0, 0, 0, 0, rx * 1.2);
+  rg.addColorStop(0, "rgba(0,0,0,1)"); rg.addColorStop(0.7, "rgba(0,0,0,1)"); rg.addColorStop(1, "rgba(0,0,0,0)");
+  mg.fillStyle = rg; mg.fillRect(-bw, -bh * 2, bw * 2, bh * 4); mg.restore();
+  mg.globalCompositeOperation = "source-over";
+  wg.drawImage(mcan, x0, y0);
+  return work;
+}
+
+// ---------------- character motion (pure functions of t) ----------------
+const DIR = { echo: -1, luck: -1, hollow: 1, light: 1 };
+function stage1(name, t) {
+  const B = BASE[name]; let x = B.x, y = B.y, s = B.s, rot = 0, sx = 1, sy = 1 + 0.012 * Math.sin(t * 3 + B.x);
+  // acting before the bomb
+  if (name === "luck") {   // looks around, confused
+    const look = prog(t, 0.15, 2.0);
+    rot = 0.07 * Math.sin(look * Math.PI * 3) * (look > 0 && look < 1 ? 1 : 0);
+    y -= 14 * Math.abs(Math.sin(prog(t, 0.2, 0.5) * Math.PI));
+  }
+  if (name === "hollow") {   // notices, turns to the group, urgent
+    const n = prog(t, 2.1, 2.3); y -= 22 * Math.sin(n * Math.PI); rot = -0.12 * easeOut(prog(t, 2.15, 2.35)) * (1 - prog(t, 3.0, 3.3));
+    const sh = prog(t, 2.4, 2.9); if (sh > 0 && sh < 1) { x += Math.sin(t * 90) * 5; s *= 1 + 0.07 * Math.sin(sh * Math.PI); }
+  }
+  if (name === "light") {   // confused head tilt
+    rot = 0.11 * easeOut(prog(t, 3.1, 3.3)) * (1 - prog(t, 4.0, 4.3));
+  }
+  if (name === "echo") {    // glance at the bomb, back, blurt
+    const g1 = easeInOut(prog(t, 3.95, 4.15)), g2 = easeInOut(prog(t, 4.3, 4.45));
+    rot = 0.16 * (g1 - g2); x += 26 * (g1 - g2);
+    const bl = prog(t, 4.48, 5.6); if (bl > 0 && bl < 1) { y -= 10 * Math.abs(Math.sin(bl * Math.PI * 5)); s *= 1 + 0.04 * Math.sin(bl * Math.PI); }
+  }
+  // the comedic beat: everyone freezes, tiny "gulp" squash
+  const bt = prog(t, TL.beat, TL.music);
+  if (bt > 0 && bt < 1) { const q = Math.sin(prog(t, TL.beat + 0.1, TL.beat + 0.25) * Math.PI); sy *= 1 - 0.05 * q; sx *= 1 + 0.03 * q; rot *= 0.3; }
+  // panic sprint toward the camera, away from the bomb behind them
+  if (t >= TL.music) {
+    const a = prog(t, TL.music, TL.sprint);
+    sy *= 1 - 0.14 * Math.sin(a * Math.PI); sx *= 1 + 0.1 * Math.sin(a * Math.PI);
+    const r = prog(t, TL.sprint, TL.launch), ph = { echo: 0, luck: 1.3, hollow: 2.1, light: 0.7 }[name];
+    if (t >= TL.sprint) {
+      y += -Math.abs(Math.sin((t - TL.sprint) * Math.PI * 7 + ph)) * 26 + 90 * easeInOut(r);
+      x += (B.x - 960) * 0.28 * easeInOut(r) + Math.sin((t + ph) * 40) * 4;
+      s *= 1 + 0.32 * easeInOut(r);
+      rot = 0.06 * Math.sin((t - TL.sprint) * Math.PI * 7 + ph) + 0.05 * DIR[name];
+      if (name === "echo") y += 40 * easeInOut(r);   // hops off the log
+    }
+  }
+  // blast wave launches them up and toward the lens, spinning
+  if (t >= TL.launch) {
+    const l = prog(t, TL.launch, 8.75), e = easeIn(l);
+    y -= 1500 * e + 120 * Math.sin(l * Math.PI); x += (B.x - 960) * 0.5 * l; s *= 1 + 0.9 * l;
+    rot += DIR[name] * (l * l * 7); sy *= 1 + 0.12 * Math.sin(prog(t, TL.launch, TL.launch + 0.2) * Math.PI);
+  }
+  return {x, y, s, rot, sx, sy};
+}
+// shot 2: flying at the camera from deep in the explosion
+const GLASS = { echo: {x: 238, y: 1092, s: 1.45, r: -0.08}, luck: {x: 700, y: 1086, s: 1.0, r: 0.05},
+                hollow: {x: 1285, y: 1090, s: 1.15, r: -0.04}, light: {x: 1620, y: 1086, s: 1.08, r: 0.07} };
+const START = { echo: [-70, 20], luck: [-25, -30], hollow: [25, -15], light: [70, 25] };
+function stage2(name, t) {
+  const G = GLASS[name], u = prog(t, TL.shot2, TL.hit), c = 0.88;
+  const p = (1 - c) / (1 - c * u);           // perspective: 0.06 -> 1, constant real speed
+  const cx = 960 + START[name][0], cy = 560 + START[name][1];
+  const img = IMG[name];
+  const fy = G.y - img.height * G.s * 0.5;      // glass centre
+  const x = lerp(cx, G.x, p), yc = lerp(cy, fy, p), s = G.s * p;
+  const rot = G.r + DIR[name] * (1 - u) ** 2 * Math.PI * 5;
+  return {x, y: yc + img.height * s * 0.5, s, rot, sx: 1, sy: 1};
+}
+function stage3(name, t) {     // squashed on the glass, then stick-slip slide down
+  const G = GLASS[name], img = IMG[name];
+  const k = prog(t, TL.hit, TL.hit + 0.35);
+  const squash = Math.exp(-k * 4) * Math.cos(k * 18);
+  let sx = 1.1 - 0.08 * (1 - k) + 0.05 * squash, sy = 0.92 + 0.06 * squash;
+  const off = { echo: 0.05, luck: 0, hollow: 0.12, light: 0.08 }[name];
+  const st = Math.max(0, t - TL.slide - off);
+  // stick (tremble) -> slips in little jerks -> accelerates off the bottom
+  let y = G.y + Math.sin(t * 70) * 2 * (st < 0.35 ? 1 : 0);
+  const sl = Math.max(0, st - 0.3);
+  y += 40 * Math.floor(sl / 0.33) + 40 * easeOut(clamp((sl % 0.33) / 0.12)) * (sl > 0 ? 1 : 0) + 1500 * Math.max(0, sl - 0.7) ** 2;
+  const rot = G.r + 0.04 * Math.sin(sl * 3 + off * 10) * (sl > 0 ? 1 : 0);
+  return {x: G.x, y, s: G.s, rot, sx, sy};
+}
+function drawChar(g, name, st, t, opts = {}) {
+  const img = opts.sil ? charImage(name, t, true) : charImage(name, t);
+  const w = IMG[name].width, h = IMG[name].height;
+  g.save(); g.globalAlpha *= (opts.alpha ?? 1);
+  g.translate(st.x, st.y); g.rotate(st.rot); g.scale(st.s * st.sx, st.s * st.sy);
+  if (opts.blur) g.filter = `blur(${opts.blur}px)`;
+  g.drawImage(img, -w / 2, -h, w, h);
+  if (name === "hollow" && !opts.sil) {      // Hollow talks with his glowing eyes (no visible mouth in the art)
+    const o = mouthOpen("hollow", t), alert = Math.exp(-Math.max(0, t - 2.1) * 3) * (t > 2.1 ? 1 : 0);
+    const e = Math.max(o ?? 0, alert * 0.8);
+    if (e > 0.02) {
+      const [ex, ey] = EYES.hollow; g.globalCompositeOperation = "lighter";
+      const rg = g.createRadialGradient(ex - w / 2, ey - h, 0, ex - w / 2, ey - h, 130);
+      rg.addColorStop(0, `rgba(120,190,255,${0.85 * e})`); rg.addColorStop(1, "rgba(60,120,255,0)");
+      g.fillStyle = rg; g.fillRect(ex - w / 2 - 140, ey - h - 140, 280, 280);
+    }
+  }
+  g.restore();
+}
+// screen-space position of a point in the character's layer
+function anchor(name, st, lx, ly) {
+  const w = IMG[name].width, h = IMG[name].height;
+  const px = (lx - w / 2) * st.s * st.sx, py = (ly - h) * st.s * st.sy;
+  return [st.x + px * Math.cos(st.rot) - py * Math.sin(st.rot), st.y + px * Math.sin(st.rot) + py * Math.cos(st.rot)];
+}
+
+// ---------------- props & FX ----------------
+function drawBomb(g, t) {
+  const x = 1016, y = 790, r = 58, tp = tickPulse(t);
+  g.save(); g.translate(x, y); const sq = 1 + 0.06 * tp; g.scale(sq, 2 - sq);
+  g.fillStyle = "rgba(0,0,0,0.45)"; g.beginPath(); g.ellipse(0, r * 0.95, r * 1.1, 14, 0, 0, 7); g.fill();
+  const rg = g.createRadialGradient(-r * 0.35, -r * 0.4, 5, 0, 0, r);
+  rg.addColorStop(0, "#5a5a78"); rg.addColorStop(0.35, "#1c1c2c"); rg.addColorStop(1, "#06060c");
+  g.fillStyle = rg; g.strokeStyle = "#000"; g.lineWidth = 5; g.beginPath(); g.arc(0, 0, r, 0, 7); g.fill(); g.stroke();
+  g.fillStyle = "#3a3a4e"; g.fillRect(-16, -r - 14, 32, 18); g.strokeRect(-16, -r - 14, 32, 18);
+  g.strokeStyle = "#c9a36a"; g.lineWidth = 5; g.beginPath(); g.moveTo(0, -r - 14); g.quadraticCurveTo(22, -r - 50, 8, -r - 66); g.stroke();
+  // fuse spark
+  const fl = 0.7 + 0.3 * Math.sin(t * 61) * Math.sin(t * 23);
+  for (let i = 0; i < 8; i++) { const a = i * 0.785 + t * 9; g.strokeStyle = i % 2 ? "#fff6a0" : "#ff9a2a"; g.lineWidth = 3;
+    g.beginPath(); g.moveTo(8, -r - 66); g.lineTo(8 + Math.cos(a) * 16 * fl, -r - 66 + Math.sin(a) * 16 * fl); g.stroke(); }
+  const sg = g.createRadialGradient(8, -r - 66, 0, 8, -r - 66, 40); sg.addColorStop(0, "rgba(255,220,120,0.9)"); sg.addColorStop(1, "rgba(255,120,0,0)");
+  g.fillStyle = sg; g.fillRect(-40, -r - 110, 100, 90);
+  // countdown timer strapped to the front: ticks red with every tick
+  g.fillStyle = "#111"; g.strokeStyle = "#888"; g.lineWidth = 3; g.beginPath(); g.roundRect(-38, -12, 76, 36, 6); g.fill(); g.stroke();
+  const secs = Math.max(0, Math.ceil(TL.beat - t)); const blink = t > TL.beat ? (Math.sin(t * 40) > 0 ? 1 : 0.2) : 1;
+  g.font = "30px Bangers"; g.textAlign = "center"; g.textBaseline = "middle"; g.fillStyle = `rgba(255,${60 + 120 * (1 - tp)},60,${blink})`;
+  g.fillText(`0:0${Math.min(9, secs)}`, 0, 7);
+  g.restore();
+  // red danger glow pulsing with each tick
+  const dg = g.createRadialGradient(x, y, 10, x, y, 260); dg.addColorStop(0, `rgba(255,40,40,${0.28 * tp + 0.05})`); dg.addColorStop(1, "rgba(255,40,40,0)");
+  g.fillStyle = dg; g.fillRect(x - 260, y - 260, 520, 520);
+}
+const BOOM = [1016, 790];
+function drawExplosion(g, t) {
+  const e = t - TL.boom; if (e < 0) return;
+  const [bx, by] = BOOM, grow = easeOut(clamp(e / 0.9));
+  // smoke cloud behind the fire
+  for (let i = 0; i < SMOKE.length; i++) {
+    const p = SMOKE[i], d = (180 + 820 * p.d) * easeOut(clamp(e / 1.6)), r = p.r * (0.6 + 1.6 * clamp(e / 1.4));
+    const col = ["#4b2a6e", "#6b3a7a", "#3a2f5e", "#7a4a6a"][Math.floor(p.col * 4)];
+    puff(g, bx + Math.cos(p.a) * d, by + Math.sin(p.a) * d * 0.55 - 160 * clamp(e / 2), r, col, 0.9, i + 3);
+  }
+  // fireball rings: yellow core -> orange -> hot pink rim, cartoon lumps
+  const layers = [["#ff3d8b", 1.0], ["#ff7a1a", 0.82], ["#ffc21a", 0.62], ["#fff6c2", 0.38]];
+  const fade = 1 - clamp((e - 0.9) / 1.0);
+  layers.forEach(([col, k], j) => puff(g, bx, by - 120 * grow, 520 * k * grow * (1 + 0.05 * Math.sin(e * 20 + j)), col, fade, 100 + j, 11));
+  // shockwave ring
+  const rr = 1700 * easeOut(clamp(e / 0.55));
+  g.save(); g.globalAlpha = 1 - clamp(e / 0.55); g.strokeStyle = "#ffffff"; g.lineWidth = 34 * (1 - clamp(e / 0.55)) + 4;
+  g.beginPath(); g.ellipse(bx, by, rr, rr * 0.6, 0, 0, 7); g.stroke(); g.restore();
+  // sparks
+  g.save(); g.lineCap = "round";
+  for (const s of SPARKS) {
+    const v = s.v * e, x = bx + Math.cos(s.a) * v, y = by + Math.sin(s.a) * v + 900 * e * e;
+    const a = 1 - clamp(e / 1.2); if (a <= 0) break;
+    g.strokeStyle = s.hue < 0.5 ? `rgba(255,240,140,${a})` : `rgba(255,120,200,${a})`; g.lineWidth = 5;
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x - Math.cos(s.a) * s.l, y - Math.sin(s.a) * s.l); g.stroke();
+  }
+  g.restore();
+  // debris: rocks and planks
+  for (const d of DEBRIS) {
+    const x = bx + Math.cos(d.a) * d.v * e, y = by + Math.sin(d.a) * d.v * e + 1100 * e * e;
+    g.save(); g.translate(x, y); g.rotate(d.spin * e); g.fillStyle = d.kind < 0.5 ? "#5a3a24" : "#3d3a4a"; g.strokeStyle = "#120a06"; g.lineWidth = 4;
+    if (d.kind < 0.5) { g.fillRect(-d.sz, -d.sz * 0.3, d.sz * 2, d.sz * 0.6); g.strokeRect(-d.sz, -d.sz * 0.3, d.sz * 2, d.sz * 0.6); }
+    else { g.beginPath(); g.moveTo(-d.sz, 0); g.lineTo(-d.sz * 0.3, -d.sz * 0.8); g.lineTo(d.sz, -d.sz * 0.2); g.lineTo(d.sz * 0.4, d.sz * 0.7); g.closePath(); g.fill(); g.stroke(); }
+    g.restore();
+  }
+}
+function bubble(g, text, x, y, t0, t1, t, opts = {}) {
+  if (t < t0 || t > t1 + 0.2) return;
+  const sc = spring(prog(t, t0, t0 + 0.35) * 1.2, 14, 6) * (1 - easeIn(prog(t, t1, t1 + 0.2)));
+  if (sc <= 0.01) return;
+  const size = opts.size || 54, pad = 30;
+  g.save(); g.font = `${size}px Bangers`; const tw = g.measureText(text).width; g.restore();
+  const bw = tw + pad * 2, bh = size * 1.55;
+  g.save(); g.translate(x, y); g.scale(sc, sc); g.rotate(opts.rot || 0);
+  g.fillStyle = "#fff"; g.strokeStyle = "#0b0b18"; g.lineWidth = 7;
+  g.beginPath();
+  if (opts.burst) {
+    for (let i = 0; i < 28; i++) { const a = (i / 28) * Math.PI * 2, rr = i % 2 ? 0.78 : 1.05; g.lineTo(Math.cos(a) * bw * 0.62 * rr, Math.sin(a) * bh * 0.95 * rr); }
+    g.closePath();
+  } else g.roundRect(-bw / 2, -bh / 2, bw, bh, bh * 0.45);
+  g.fill(); g.stroke();
+  const [tx, ty] = opts.tail || [0, 1];
+  g.beginPath(); g.moveTo(-18 * Math.sign(tx || 1), bh / 2 - 6); g.lineTo(tx * 70, bh / 2 + 52 * ty); g.lineTo(18 * Math.sign(tx || 1) + 10, bh / 2 - 6); g.closePath(); g.fill();
+  g.beginPath(); g.moveTo(-18 * Math.sign(tx || 1), bh / 2 - 3); g.lineTo(tx * 70, bh / 2 + 52 * ty); g.lineTo(18 * Math.sign(tx || 1) + 10, bh / 2 - 3); g.stroke();
+  g.fillStyle = "#fff"; g.fillRect(-26, bh / 2 - 12, 62, 12);
+  g.font = `${size}px Bangers`; g.textAlign = "center"; g.textBaseline = "middle"; g.fillStyle = opts.color || "#141428";
+  g.fillText(text, 0, 4);
+  g.restore();
+}
+function popGlyph(g, text, x, y, t0, t1, t, col, size = 90, rot = 0) {
+  if (t < t0 || t > t1) return;
+  const sc = spring(prog(t, t0, t0 + 0.3) * 1.3, 15, 6) * (1 - easeIn(prog(t, t1 - 0.15, t1)));
+  comicText(g, text, x, y + Math.sin(t * 9) * 4, size, col, rot + Math.sin(t * 7) * 0.05, sc);
+}
+function sweat(g, x, y, t, k = 1) {
+  g.save(); g.translate(x, y); g.scale(k, k); g.fillStyle = "#6fd0ff"; g.strokeStyle = "#0b0b18"; g.lineWidth = 4;
+  g.beginPath(); g.moveTo(0, -24); g.quadraticCurveTo(16, 4, 0, 12); g.quadraticCurveTo(-16, 4, 0, -24); g.fill(); g.stroke(); g.restore();
+}
+function dust(g, x, y, t, seed, k = 1) {
+  for (let i = 0; i < 6; i++) {
+    const ph = ((t * 3 + hash(seed + i)) % 1), r = (30 + 50 * ph) * k;
+    puff(g, x + (hash(seed * 7 + i) - 0.5) * 220 * k - ph * 60 * Math.sign(x - 960), y - 10 - ph * 40, r, "#9db0d8", 0.75 * (1 - ph), seed + i * 13, 5);
+  }
+}
+
+// ---------------- camera ----------------
+function shakeAt(t) {
+  let a = 0;
+  a += 26 * Math.exp(-Math.max(0, t - TL.boom) * 3.2) * (t >= TL.boom ? 1 : 0);
+  a += 30 * Math.exp(-Math.max(0, t - TL.hit) * 6) * (t >= TL.hit ? 1 : 0);
+  a += 34 * Math.exp(-Math.max(0, t - TL.title) * 7) * (t >= TL.title ? 1 : 0);
+  a += 4 * (t > TL.sprint && t < TL.launch ? 1 : 0);
+  a += 6 * (t > TL.hollow && t < TL.hollow + 0.4 ? 1 : 0);
+  const f = Math.floor(t * FPS);
+  return [(hash(f * 1.7) - 0.5) * 2 * a, (hash(f * 3.1 + 9) - 0.5) * 2 * a];
+}
+function camera1(t) {   // zoom, focus point
+  let z = 1 + 0.07 * easeInOut(prog(t, 0, 2.0)) + 0.04 * easeInOut(prog(t, 2.0, 4.0));
+  let fx = 960, fy = 640;
+  const run = spring(prog(t, TL.hollow, TL.hollow + 0.4) * 1.2, 12, 6) * (1 - easeInOut(prog(t, 2.95, 3.25)));
+  z += 0.09 * run; fx = lerp(fx, 1250, run * 0.6); fy = lerp(fy, 600, run * 0.5);
+  const why = easeInOut(prog(t, 3.15, 3.35)) * (1 - easeInOut(prog(t, 3.85, 4.05)));
+  z += 0.03 * why; fx = lerp(fx, 1500, why * 0.35);
+  const ec = easeInOut(prog(t, 4.3, 4.6)) * (1 - easeInOut(prog(t, 5.5, 5.62)));
+  z += 0.05 * ec; fx = lerp(fx, 500, ec * 0.45);
+  const beat = prog(t, TL.beat, TL.beat + 0.08) * (1 - prog(t, TL.music - 0.05, TL.music));
+  if (t >= TL.beat && t < TL.music) { z = 1.13 + 0.02 * beat; fx = 960; fy = 600; }   // snap: deadpan group shot
+  if (t >= TL.music) { const k = easeOut(prog(t, TL.music, TL.music + 0.25)); z = lerp(1.13, 1.0, k); fx = 960; fy = lerp(600, 560, k); }
+  z = Math.max(z, 1.03);
+  fx = clamp(fx, 960 / z, W - 960 / z); fy = clamp(fy, 540 / z, H - 540 / z);
+  return {z, fx, fy};
+}
+
+// ---------------- shots ----------------
+function shotGround(t) {
+  const cam = camera1(t), [sx, sy] = shakeAt(t);
+  ctx.save(); ctx.translate(W / 2 + sx, H / 2 + sy); ctx.scale(cam.z, cam.z); ctx.translate(-cam.fx, -cam.fy);
+  ctx.drawImage(BG, 0, 0);
+  // explosion light floods the forest
+  const e = t - TL.boom;
+  if (e >= 0) { ctx.fillStyle = `rgba(255,120,60,${0.45 * Math.exp(-e * 1.2)})`; ctx.fillRect(-200, -200, W + 400, H + 400); }
+  if (t < TL.boom) drawBomb(ctx, t);
+  drawExplosion(ctx, t);
+  const impact = t >= TL.boom && t < TL.boom + 0.1;   // 3-frame anime impact frame: silhouettes on white
+  if (impact) { ctx.fillStyle = "#fffdf3"; ctx.fillRect(-300, -300, W + 600, H + 600); }
+  const order = ["echo", "luck", "hollow", "light"];
+  for (const n of order) {
+    const st = stage1(n, t);
+    if (t >= TL.launch) {   // smoke under them hides the cut edge while airborne
+      const [ax, ay] = anchor(n, st, IMG[n].width / 2, IMG[n].height);
+      for (let i = 0; i < 4; i++) puff(ctx, ax + (i - 1.5) * 60 * st.s / 0.58, ay + 10, 70 * st.s / 0.58, i % 2 ? "#8a6aa8" : "#c48aa8", 0.95, i + n.length * 7);
+    }
+    if (t >= TL.sprint && t < TL.launch + 0.3) {   // motion trail
+      for (let k = 3; k >= 1; k--) drawChar(ctx, n, stage1(n, t - k * 0.025), t, {alpha: 0.12, sil: impact});
+    }
+    drawChar(ctx, n, st, t, {sil: impact});
+    if (n === "echo" && t < TL.launch) ctx.drawImage(LOG, 40, 792 + (t > TL.sprint ? 30 * easeInOut(prog(t, TL.sprint, TL.launch)) : 0));
+  }
+  ctx.drawImage(FG, 0, 0);
+  if (t >= TL.sprint && t < TL.launch + 0.1) for (const n of order) { const st = stage1(n, t); dust(ctx, st.x, Math.min(st.y, 1010), t, n.length * 11, st.s / 0.58); }
+  if (t >= TL.launch) { const k = prog(t, TL.launch, 8.4); for (let i = 0; i < 10; i++) puff(ctx, 100 + i * 190, 1000 - 380 * k * hash(i), 160 + 240 * k, i % 2 ? "#6b3a7a" : "#ff7a3a", 0.85 * k, 400 + i, 7); }
+  // acting FX: question marks, alert, sweat
+  const A = (n, lx, ly, tt = t) => anchor(n, stage1(n, tt), lx, ly);
+  if (t < TL.beat + 0.4) {
+    const [lx, ly] = A("luck", 620, 30); popGlyph(ctx, "?", lx, ly - 30, 0.3, 2.1, t, "#ffd21a", 96, 0.15);
+    const [lx2, ly2] = A("luck", 180, 60); popGlyph(ctx, "?", lx2, ly2 - 10, 0.8, 2.1, t, "#ffd21a", 70, -0.2);
+    const [hx, hy] = A("hollow", 420, 40); popGlyph(ctx, "!", hx, hy - 20, 2.12, 3.0, t, "#ff2a2a", 130, 0.12);
+    const [gx, gy] = A("light", 600, 60); popGlyph(ctx, "?", gx, gy - 30, 3.22, 4.2, t, "#ff3b3b", 100, 0.2);
+    const [ex, ey] = A("echo", 440, 40); popGlyph(ctx, "!!", ex, ey - 10, 4.48, 5.55, t, "#7dff2a", 84, 0.18);
+  }
+  if (t >= TL.beat && t < TL.music + 0.1) {   // the deadpan beat: big sweat drops on everyone
+    for (const n of order) { const [fx, fy] = A(n, FACE[n][0] + 110, FACE[n][1] - 60); const d = easeOut(prog(t, TL.beat + 0.05, TL.beat + 0.3)); if (d > 0) sweat(ctx, fx, fy + 30 * prog(t, TL.beat + 0.2, TL.music), t, 1.3 * d); }
+  }
+  if (t >= TL.sprint && t < TL.launch) for (const n of order) { const [fx, fy] = A(n, FACE[n][0] + 140, FACE[n][1] - 80); sweat(ctx, fx + 30 * Math.sin(t * 13), fy - 20 * ((t * 4) % 1), t, 0.9); }
+  // dialogue bubbles (each line by the right character)
+  const bub = (n, lx, ly) => A(n, lx, ly);
+  { const [x, y] = bub("luck", 380, -40); bubble(ctx, LINES.luck, clamp(x, 330, 1590), y - 40, TL.luck - 0.05, 2.2, t, {tail: [0.4, 1]}); }
+  { const [x, y] = bub("hollow", 250, -30); bubble(ctx, LINES.hollow, x, y - 40, TL.hollow - 0.03, 3.05, t, {size: 110, burst: true, color: "#e0141e", rot: -0.06, tail: [-0.2, 1]}); }
+  { const [x, y] = bub("light", 340, -30); bubble(ctx, LINES.light, Math.min(x, 1700), y - 40, TL.light - 0.03, 4.1, t, {size: 70, tail: [-0.3, 1], rot: 0.05}); }
+  { const [x, y] = bub("echo", 230, -40); bubble(ctx, LINES.echo, clamp(x + 60, 600, 1590), y - 30, TL.echo - 0.05, 5.95, t, {size: 62, tail: [-0.5, 1], rot: -0.03}); }
+  ctx.restore();
+  if (impact) return;
+  const fl = t >= TL.boom ? Math.max(0, 1 - (t - TL.boom - 0.1) / 0.35) : 0;
+  if (fl > 0) { ctx.fillStyle = `rgba(255,250,235,${0.85 * fl})`; ctx.fillRect(0, 0, W, H); }
+  // smoke wipe into the next shot
+  const wp = prog(t, 8.6, TL.shot2);
+  smokeWipe(ctx, wp);
+}
+
+function smokeWipe(g, k) {   // layered, shaded cartoon cloud that fills the frame as k: 0 -> 1
+  if (k <= 0) return;
+  const cols = [["#3a1f5c", "#5a3482"], ["#c4502a", "#ff8a3a"], ["#5c2a6e", "#8a4aa0"], ["#e0407a", "#ff7aa8"]];
+  for (let i = 0; i < 34; i++) {
+    const cx = (i % 7) * 320 - 40 + (hash(i * 5.1) - 0.5) * 160, cy = Math.floor(i / 7) * 270 + 20 + (hash(i * 2.3) - 0.5) * 120;
+    const r = (240 + 160 * hash(i * 9.7)) * easeOut(clamp(k * 1.25 - hash(i * 1.9) * 0.25));
+    if (r <= 2) continue;
+    const [dark, light] = cols[i % 4];
+    puff(g, cx, cy, r, dark, 1, 700 + i, 8);
+    puff(g, cx - r * 0.18, cy - r * 0.2, r * 0.72, light, 1, 900 + i, 7);
+  }
+}
+function skyBlast(g, t, dark = 0) {
+  const rg = g.createRadialGradient(960, 540, 40, 960, 540, 1200);
+  rg.addColorStop(0, "#fff1b0"); rg.addColorStop(0.18, "#ffa53a"); rg.addColorStop(0.45, "#e2407a"); rg.addColorStop(0.8, "#4a1f6e"); rg.addColorStop(1, "#1a0c33");
+  g.fillStyle = rg; g.fillRect(0, 0, W, H);
+  // radial speed lines rushing outward = flying toward us
+  g.save(); g.lineCap = "round";
+  for (const s of STREAKS) {
+    const ph = (t * s.sp * 1.4 + s.s) % 1, r0 = 80 + ph * ph * 1300, r1 = r0 + 60 + ph * 420;
+    g.strokeStyle = `rgba(255,255,230,${0.55 * ph})`; g.lineWidth = s.w * (0.4 + ph);
+    g.beginPath(); g.moveTo(960 + Math.cos(s.a) * r0, 540 + Math.sin(s.a) * r0); g.lineTo(960 + Math.cos(s.a) * r1, 540 + Math.sin(s.a) * r1); g.stroke();
+  }
+  g.restore();
+  for (let i = 0; i < STARS.length; i++) {  // smoke puffs streaming past
+    const p = STARS[i], ph = (t * 0.5 + p.s) % 1, d = 120 + ph * ph * 1100;
+    puff(g, 960 + Math.cos(p.a) * d, 540 + Math.sin(p.a) * d * 0.7, 30 + 160 * ph * ph, i % 3 ? "#6b3a7a" : "#a04a7a", 0.55 * ph, 900 + i, 6);
+  }
+  if (dark > 0) { g.fillStyle = `rgba(5,8,23,${dark})`; g.fillRect(0, 0, W, H); }
+}
+function shotFly(t) {
+  const [sx, sy] = shakeAt(t);
+  ctx.save(); ctx.translate(sx, sy);
+  skyBlast(ctx, t);
+  const order = ["hollow", "luck", "light", "echo"].sort((a, b) => stage2(a, t).s - stage2(b, t).s);
+  for (const n of ["luck", "hollow", "echo", "light"]) {
+    const st = stage2(n, t);
+    // trailing smoke comet behind each (also hides the cut edge)
+    for (let k = 5; k >= 1; k--) { const sp = stage2(n, t - k * 0.06); const [ax, ay] = anchor(n, sp, IMG[n].width / 2, IMG[n].height * 0.8);
+      puff(ctx, ax, ay, 260 * sp.s, k % 2 ? "#ffcf6a" : "#ff7a3a", 0.35 + 0.08 * (5 - k), k + n.length, 6); }
+    const [bx, by] = anchor(n, st, IMG[n].width / 2, IMG[n].height * 0.97);
+    for (let i = 0; i < 4; i++) puff(ctx, bx + (i - 1.5) * 110 * st.s, by, 150 * st.s, i % 2 ? "#ffb04a" : "#ff6a4a", 0.95, 31 + i + n.length);
+    for (let k = 3; k >= 1; k--) drawChar(ctx, n, stage2(n, t - k * 0.03), t, {alpha: 0.18});
+    drawChar(ctx, n, st, t);
+    const [bx2, by2] = anchor(n, st, IMG[n].width / 2, IMG[n].height * 0.99);
+    for (let i = 0; i < 5; i++) puff(ctx, bx2 + (i - 2) * 120 * st.s, by2 + 20 * st.s, 120 * st.s, i % 2 ? "#ffd27a" : "#ff8a4a", 1, 61 + i + n.length);
+  }
+  ctx.restore();
+  const wp = 1 - prog(t, TL.shot2, TL.shot2 + 0.32);   // smoke wipe out
+  smokeWipe(ctx, wp);
+}
+function shotGlass(t) {
+  const [sx, sy] = shakeAt(t);
+  ctx.save(); ctx.translate(sx, sy);
+  skyBlast(ctx, TL.hit + (t - TL.hit) * 0.15, 0.55 * easeInOut(prog(t, TL.slide, TL.title)) + 0.2);
+  const draw = ["luck", "hollow", "echo", "light"];
+  for (const n of draw) {
+    const st = stage3(n, t);
+    // smear streaks left on the glass above them as they slide
+    const travel = st.y - GLASS[n].y;
+    if (travel > 4) {
+      const [fx, fy] = anchor(n, {...st, y: GLASS[n].y}, FACE[n][0], FACE[n][1]);
+      const w = IMG[n].width * st.s * 0.5;
+      for (let i = 0; i < 5; i++) {
+        const xx = fx - w / 2 + (i + 0.5) * w / 5, a = 0.16 * (1 - prog(t, TL.title - 0.3, TL.title));
+        const gr = ctx.createLinearGradient(0, fy - 60, 0, fy + travel);
+        gr.addColorStop(0, "rgba(255,255,255,0)"); gr.addColorStop(1, `rgba(255,255,255,${a})`);
+        ctx.fillStyle = gr; ctx.beginPath(); ctx.roundRect(xx - 12, fy - 60, 24 + 10 * hash(i + n.length), travel + 60, 12); ctx.fill();
+      }
+      // squeaky slide motion streaks
+      for (let k = 4; k >= 1; k--) drawChar(ctx, n, {...st, y: st.y - k * 14}, t, {alpha: 0.1});
+    }
+    drawChar(ctx, n, st, t);
+  }
+  // dizzy stars orbiting each head
+  for (const n of draw) {
+    const st = stage3(n, t), [fx, fy] = anchor(n, st, FACE[n][0], FACE[n][1] - 170);
+    const d = easeOut(prog(t, TL.hit + 0.15, TL.hit + 0.45));
+    for (let i = 0; i < 4; i++) {
+      const a = t * 5 + i * Math.PI / 2 + n.length, x = fx + Math.cos(a) * 120 * d, y = fy + Math.sin(a) * 30 * d;
+      star(ctx, x, y, 22 * d * (0.8 + 0.4 * (Math.sin(a) + 1) / 2), t * 4 + i, i % 2 ? "#ffe14a" : "#fff");
+    }
+  }
+  // the glass: impact flash ring, crack-free cartoon "splat" ripple, glints
+  const k = prog(t, TL.hit, TL.hit + 0.45);
+  if (k < 1) {
+    ctx.save(); ctx.globalAlpha = 1 - k; ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 10 * (1 - k);
+    for (const c of [[860, 520], [480, 560], [1360, 540]]) { ctx.beginPath(); ctx.ellipse(c[0], c[1], 80 + 700 * easeOut(k), 50 + 420 * easeOut(k), 0, 0, 7); ctx.stroke(); }
+    ctx.restore();
+  }
+  ctx.save(); ctx.globalCompositeOperation = "screen";
+  const gl = ctx.createLinearGradient(0, 0, W, H); const gp = 0.25 + 0.5 * prog(t, TL.hit, TL.title);
+  gl.addColorStop(clamp(gp - 0.08), "rgba(255,255,255,0)"); gl.addColorStop(gp, "rgba(200,230,255,0.22)"); gl.addColorStop(clamp(gp + 0.04), "rgba(255,255,255,0)");
+  ctx.fillStyle = gl; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = "rgba(200,230,255,0.10)"; ctx.beginPath(); ctx.moveTo(1500, 0); ctx.lineTo(1640, 0); ctx.lineTo(1340, H); ctx.lineTo(1200, H); ctx.fill();
+  ctx.restore();
+  ctx.restore();
+  const fl = 1 - prog(t, TL.hit, TL.hit + 0.18);
+  if (fl > 0) { ctx.fillStyle = `rgba(255,255,255,${0.9 * fl})`; ctx.fillRect(0, 0, W, H); }
+  comicText(ctx, "SPLAT!", 960, 140, 120 * spring(prog(t, TL.hit, TL.hit + 0.3) * 1.2, 14, 6), "#ffe14a", -0.08, 1);
+}
+function titleBg(g, t) {
+  const rg = g.createRadialGradient(960, 520, 40, 960, 540, 1100);
+  rg.addColorStop(0, "#1b3fb0"); rg.addColorStop(0.45, "#0b1650"); rg.addColorStop(1, "#03050f");
+  g.fillStyle = rg; g.fillRect(0, 0, W, H);
+  g.save(); g.lineCap = "round";
+  for (const s of STREAKS) {   // electric blue streaks (gaming energy) radiating from the slam
+    const e = t - TL.title, ph = (e * s.sp * 0.8 + s.s) % 1, r0 = 300 + ph * 900;
+    g.strokeStyle = `rgba(90,190,255,${0.4 * (1 - ph)})`; g.lineWidth = s.w;
+    g.beginPath(); g.moveTo(960 + Math.cos(s.a) * r0, 530 + Math.sin(s.a) * r0 * 0.6); g.lineTo(960 + Math.cos(s.a) * (r0 + 120), 530 + Math.sin(s.a) * (r0 + 120) * 0.6); g.stroke();
+  }
+  g.restore();
+}
+function shotTitle(t) {
+  // characters finish sliding out underneath while the title drops in
+  const pre = t < TL.title;
+  if (pre) shotGlass(t);
+  else { const [sx, sy] = shakeAt(t); ctx.save(); ctx.translate(sx, sy); titleBg(ctx, t); ctx.restore(); }
+  const e = t - TL.title, img = IMG.title, base = 1250 / img.width;
+  let sc, alpha = 1;
+  if (e < 0) { const k = prog(t, TL.title - 0.16, TL.title); sc = lerp(3.2, 1.0, easeIn(k)); alpha = k; }
+  else sc = 1 + 0.16 * Math.exp(-e * 9) * Math.cos(e * 30);
+  if (alpha <= 0) return;
+  const [sx, sy] = shakeAt(t);
+  const draw = (s, a, blur = 0) => { ctx.save(); ctx.globalAlpha = a; if (blur) ctx.filter = `blur(${blur}px)`; ctx.translate(960 + sx, 520 + sy); ctx.scale(base * s, base * s); ctx.drawImage(img, -img.width / 2, -img.height / 2); ctx.restore(); };
+  if (e >= 0) {   // glow behind the logo
+    const gg = ctx.createRadialGradient(960, 520, 50, 960, 520, 760);
+    gg.addColorStop(0, `rgba(80,170,255,${0.45 + 0.1 * Math.sin(e * 8)})`); gg.addColorStop(1, "rgba(80,170,255,0)");
+    ctx.fillStyle = gg; ctx.fillRect(0, 0, W, H);
+  }
+  if (e < 0.12) for (let k = 3; k >= 1; k--) draw(sc * (1 + k * 0.12), 0.18 * alpha, 6);
+  draw(sc, alpha);
+  if (e >= 0) {
+    // shockwave + sparks + flash on the impact frame
+    const k = prog(t, TL.title, TL.title + 0.4);
+    ctx.save(); ctx.globalAlpha = 1 - k; ctx.strokeStyle = "#bfe6ff"; ctx.lineWidth = 26 * (1 - k) + 2;
+    ctx.beginPath(); ctx.ellipse(960, 540, 300 + 1100 * easeOut(k), 160 + 600 * easeOut(k), 0, 0, 7); ctx.stroke(); ctx.restore();
+    ctx.save(); ctx.lineCap = "round";
+    for (let i = 0; i < 40; i++) {
+      const s = SPARKS[i], d = 420 + 900 * easeOut(clamp(e / 0.6)) * (0.5 + s.hue), a = 1 - clamp(e / 0.6);
+      if (a <= 0) break;
+      const ang = (i / 40) * Math.PI * 2;
+      ctx.strokeStyle = i % 3 ? `rgba(120,210,255,${a})` : `rgba(255,255,255,${a})`; ctx.lineWidth = 6;
+      ctx.beginPath(); ctx.moveTo(960 + Math.cos(ang) * d, 530 + Math.sin(ang) * d * 0.55); ctx.lineTo(960 + Math.cos(ang) * (d - s.l * 1.5), 530 + Math.sin(ang) * (d - s.l * 1.5) * 0.55); ctx.stroke();
+    }
+    ctx.restore();
+    const fl = 1 - prog(t, TL.title, TL.title + 0.14);
+    if (fl > 0) { ctx.fillStyle = `rgba(255,255,255,${0.85 * fl})`; ctx.fillRect(0, 0, W, H); }
+  }
+}
+
+// ---------------- frame ----------------
+window.renderFrame = (t) => {
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.filter = "none";
+  ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
+  if (t < TL.shot2) shotGround(t);
+  else if (t < TL.hit) shotFly(t);
+  else if (t < TL.title - 0.16) shotGlass(t);
+  else shotTitle(t);
+  // letterbox vignette for a cinematic feel
+  const v = ctx.createRadialGradient(960, 540, 600, 960, 540, 1250);
+  v.addColorStop(0, "rgba(0,0,0,0)"); v.addColorStop(1, "rgba(0,0,0,0.45)");
+  ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
+};
+</script>
