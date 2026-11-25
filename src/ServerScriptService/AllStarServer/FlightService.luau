@@ -29,7 +29,7 @@ local FlightService = {}
 local FLIGHT = Config.Flight
 local ATTR = Config.Attributes
 
-function FlightService.setFlying(player: Player, state: PlayerState.State, character: Model, on: boolean)
+function FlightService.setFlying(_player: Player, state: PlayerState.State, character: Model, on: boolean)
 	state.flying = on
 	state.strikes = 0
 	character:SetAttribute(ATTR.Flying, on)
