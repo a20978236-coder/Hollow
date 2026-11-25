@@ -1,0 +1,4130 @@
+<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
+<External>null</External><External>nil</External>
+<Item class="Workspace" referent="RBX00000003"><Properties><string name="Name">Workspace</string></Properties><Item class="Part" referent="RBX00000001"><Properties><string name="Name">Baseplate</string><bool name="Anchored">true</bool><bool name="Locked">true</bool><CoordinateFrame name="CFrame"><X>0</X><Y>-8</Y><Z>0</Z><R00>1</R00><R01>0</R01><R02>0</R02><R10>0</R10><R11>1</R11><R12>0</R12><R20>0</R20><R21>0</R21><R22>1</R22></CoordinateFrame><Vector3 name="size"><X>512</X><Y>16</Y><Z>512</Z></Vector3><Color3uint8 name="Color3uint8">4280229670</Color3uint8><token name="Material">800</token></Properties></Item>
+<Item class="SpawnLocation" referent="RBX00000002"><Properties><string name="Name">SpawnLocation</string><bool name="Anchored">true</bool><bool name="Locked">true</bool><CoordinateFrame name="CFrame"><X>0</X><Y>0.5</Y><Z>0</Z><R00>1</R00><R01>0</R01><R02>0</R02><R10>0</R10><R11>1</R11><R12>0</R12><R20>0</R20><R21>0</R21><R22>1</R22></CoordinateFrame><Vector3 name="size"><X>12</X><Y>1</Y><Z>12</Z></Vector3><Color3uint8 name="Color3uint8">4282835455</Color3uint8><token name="Material">288</token></Properties></Item>
+</Item>
+<Item class="Lighting" referent="RBX00000004"><Properties><string name="Name">Lighting</string><float name="ClockTime">20.5</float><float name="Brightness">1.5</float></Properties></Item>
+<Item class="ReplicatedStorage" referent="RBX00000013"><Properties><string name="Name">ReplicatedStorage</string></Properties><Item class="Folder" referent="RBX00000012"><Properties><string name="Name">AllStar</string></Properties><Item class="ModuleScript" referent="RBX00000005"><Properties><string name="Name">Config</string><ProtectedString name="Source"><![CDATA[--[[
+	All-Star :: Config (ModuleScript, ReplicatedStorage.AllStar.Config)
+
+	Single source of truth for every tunable value. Shared by server and client.
+	The SERVER is authoritative: changing a value here on the client cannot grant
+	extra speed, damage or shorter cooldowns, because the server re-reads its own
+	copy of this module and validates every request against it.
+
+	The table is deep-frozen at the bottom so nothing can mutate it at runtime.
+]]
+
+local Config = {}
+
+Config.Version = "1.0.0"
+
+-- Who gets the All-Star kit.
+Config.Access = {
+	-- true  = every player spawns as All-Star (single-hero experience / testing).
+	-- false = only players the server marks with player:SetAttribute(HeroAttribute, true).
+	GrantToAllPlayers = true,
+	HeroAttribute = "AllStarHero",
+}
+
+-- Palette taken from the "Lunar Prime Armor" character sheet.
+Config.Colors = {
+	ArmorBlack = Color3.fromRGB(14, 14, 18),
+	ArmorTrim = Color3.fromRGB(232, 236, 244),
+	ArmorSilver = Color3.fromRGB(190, 196, 206),
+	EmblemWhite = Color3.fromRGB(255, 255, 255),
+	EnergyWhite = Color3.fromRGB(245, 252, 255),
+	EnergyCyan = Color3.fromRGB(70, 225, 255),
+	Hair = Color3.fromRGB(22, 16, 13),
+	Skin = Color3.fromRGB(141, 92, 62),
+	UiBackground = Color3.fromRGB(10, 12, 18),
+}
+
+-- Custom cooldowns (seconds). Keys are shared by server feedback and the HUD.
+Config.Cooldowns = {
+	FlightToggle = 1.25,
+	Blast = 0.45, -- quick tap blast
+	ChargedBlast = 3.0, -- used instead of Blast when charge >= Blast.ExplosiveThreshold
+	Landing = 4.0,
+}
+
+Config.Flight = {
+	Speed = 70, -- studs/s cruise speed (any direction)
+	VerticalSpeed = 45, -- studs/s from the up/down controls
+	DiveSpeed = 150, -- studs/s straight down when the Land/Dive action is used mid-air
+	Acceleration = 6, -- higher = snappier velocity changes
+	Responsiveness = 22, -- AlignOrientation responsiveness
+	TiltDegrees = 35, -- forward body pitch at full speed
+	TakeoffBoost = 28, -- small upward pop when flight starts on the ground
+	-- Server anti-exploit
+	SpeedTolerance = 1.35, -- allowed multiplier over the legit max before a strike
+	StrikesBeforeRevoke = 5, -- consecutive-ish strikes before flight is force-disabled
+	RevokeCooldown = 6, -- flight cooldown applied after a revoke
+}
+
+Config.Blast = {
+	ProjectileSpeed = 210,
+	MaxRange = 420,
+	MinRadius = 0.7, -- projectile collision radius at 0 charge
+	MaxRadius = 2.4, -- ... at full charge
+	MinDamage = 12, -- direct-hit damage at 0 charge
+	MaxDamage = 45, -- direct-hit damage at full charge
+	ChargeTime = 1.6, -- seconds to reach full charge
+	MaxHoldTime = 6, -- charge is auto-released by the client / cleared by the server after this
+	ExplosiveThreshold = 0.6, -- charge fraction at which a blast becomes explosive
+	ExplosionRadiusMin = 8,
+	ExplosionRadiusMax = 18,
+	ExplosionDamageMin = 14,
+	ExplosionDamageMax = 38,
+	MaxActivePerPlayer = 6,
+	MaxActiveGlobal = 80,
+	OriginHeight = 1.2, -- projectile spawns this far above the HumanoidRootPart
+	NpcKnockback = 55, -- impulse speed applied to server-owned (NPC) assemblies
+}
+
+Config.Landing = {
+	MinImpactSpeed = 55, -- downward studs/s needed for a superhero landing
+	RecentWindow = 1.0, -- impact speed must have been observed within this many seconds
+	GroundCheckDistance = 9,
+	ShockwaveRadius = 14,
+	ShockwaveDamage = 10, -- set to 0 for a purely cosmetic landing
+	MoveLockTime = 0.7, -- local movement lock while the pose plays
+	PoseTime = 1.1,
+	AutoFromFalls = true, -- also trigger from big falls, not only from flight dives
+}
+
+Config.Combat = {
+	PvPEnabled = true,
+	FriendlyFire = false, -- respects Teams when false
+	CreatorTagLifetime = 2, -- seconds an ObjectValue "creator" tag stays on the victim
+}
+
+Config.Security = {
+	RequestsPerSecond = 12, -- token-bucket refill rate per player
+	RequestBurst = 20, -- bucket size
+	UnitVectorTolerance = 0.05, -- |dir.Magnitude - 1| allowed
+	MonitorInterval = 0.1, -- server velocity sampling period
+}
+
+-- Optional uploaded animations ("rbxassetid://123"). Empty = procedural poses only.
+Config.Animations = {
+	Flight = "",
+	Charge = "",
+	Landing = "",
+}
+
+Config.Appearance = {
+	Enabled = true,
+	ProceduralArmor = true,
+	ProceduralHair = true, -- used when HairAccessoryIds is empty
+	HairCurlCount = 70,
+	-- Comma-separated catalog hair accessory IDs. When set, replaces procedural hair.
+	HairAccessoryIds = "",
+	-- Optional classic clothing template asset IDs (0 = none; body colors form the suit).
+	ShirtTemplateId = 0,
+	PantsTemplateId = 0,
+	StripOtherAccessories = true, -- "helmetless": removes hats/face accessories
+}
+
+Config.Keybinds = {
+	ToggleFlight = { Enum.KeyCode.F, Enum.KeyCode.ButtonY },
+	Blast = { Enum.KeyCode.E, Enum.KeyCode.ButtonR2 },
+	BlastMouse = true, -- also allow holding left mouse button
+	Land = { Enum.KeyCode.G, Enum.KeyCode.ButtonB },
+	Up = { Enum.KeyCode.Space, Enum.KeyCode.ButtonA },
+	Down = { Enum.KeyCode.LeftControl, Enum.KeyCode.C, Enum.KeyCode.ButtonX },
+}
+
+-- Character attributes written ONLY by the server (clients just read them for VFX).
+Config.Attributes = {
+	Flying = "AllStarFlying",
+	Charging = "AllStarCharging",
+}
+
+-- Whitelisted request actions (client -> server).
+Config.Actions = {
+	ToggleFlight = "ToggleFlight",
+	ChargeStart = "ChargeStart",
+	ChargeCancel = "ChargeCancel",
+	Fire = "Fire",
+	Land = "Land",
+}
+
+Config.Testing = {
+	-- Builds target dummies, walls and a jump tower when the server starts.
+	-- Turn OFF before publishing a real game.
+	BuildTestArena = true,
+	DummyRespawnTime = 4,
+}
+
+local function deepFreeze(t: { [any]: any })
+	for _, value in t do
+		if type(value) == "table" and not table.isfrozen(value) then
+			deepFreeze(value)
+		end
+	end
+	table.freeze(t)
+end
+
+deepFreeze(Config)
+
+return Config
+]]></ProtectedString></Properties></Item>
+<Item class="ModuleScript" referent="RBX00000006"><Properties><string name="Name">CooldownTracker</string><ProtectedString name="Source"><![CDATA[--[[
+	All-Star :: CooldownTracker (ModuleScript, ReplicatedStorage.AllStar.CooldownTracker)
+
+	Reusable keyed cooldown timer. The server keeps one per player (authoritative);
+	the client keeps one for HUD display and to avoid sending requests that would
+	obviously be rejected.
+
+	    local cd = CooldownTracker.new()
+	    if cd:IsReady("Blast") then cd:Start("Blast", 0.5) end
+	    local remaining, duration = cd:Get("Blast")
+]]
+
+local CooldownTracker = {}
+CooldownTracker.__index = CooldownTracker
+
+export type CooldownTracker = typeof(setmetatable(
+	{} :: {
+		_ends: { [string]: number },
+		_durations: { [string]: number },
+		_clock: () -> number,
+	},
+	CooldownTracker
+))
+
+function CooldownTracker.new(clock: (() -> number)?): CooldownTracker
+	return setmetatable({
+		_ends = {},
+		_durations = {},
+		_clock = clock or os.clock,
+	}, CooldownTracker)
+end
+
+function CooldownTracker.IsReady(self: CooldownTracker, key: string): boolean
+	return self._clock() >= (self._ends[key] or 0)
+end
+
+function CooldownTracker.Start(self: CooldownTracker, key: string, duration: number)
+	self._ends[key] = self._clock() + duration
+	self._durations[key] = duration
+end
+
+-- Returns remaining seconds and the full duration of the last Start (for progress bars).
+function CooldownTracker.Get(self: CooldownTracker, key: string): (number, number)
+	local remaining = math.max(0, (self._ends[key] or 0) - self._clock())
+	return remaining, self._durations[key] or 0
+end
+
+function CooldownTracker.Reset(self: CooldownTracker, key: string)
+	self._ends[key] = nil
+	self._durations[key] = nil
+end
+
+function CooldownTracker.Clear(self: CooldownTracker)
+	table.clear(self._ends)
+	table.clear(self._durations)
+end
+
+return CooldownTracker
+]]></ProtectedString></Properties></Item>
+<Item class="ModuleScript" referent="RBX00000007"><Properties><string name="Name">Poses</string><ProtectedString name="Source"><![CDATA[--[[
+	All-Star :: Poses (ModuleScript, ReplicatedStorage.AllStar.Poses) — CLIENT ONLY
+
+	Procedural R15 poses written onto Motor6D.Transform, so the kit works
+	without any uploaded animation assets. Every client applies poses to every
+	All-Star character it sees (driven by replicated attributes and the Vfx
+	remote), so everybody sees the flight pose, the charging arm and the
+	superhero landing.
+
+	If you upload real animations, put their IDs in Config.Animations; the
+	controllers will play those as well (poses still blend on top).
+
+	NOTE: joint angles below are hand-authored estimates. They have NOT been
+	checked visually in Roblox Studio — tune them in POSES if a pose looks off.
+
+	Joint frame convention (R15 C0 frames are axis-aligned with the body):
+	  +X right, +Y up, +Z back.
+	  Hips/Shoulders: +X rotation swings the limb FORWARD.
+	  Knees/Elbows:   -X rotation bends the lower limb BACKWARD (knee bend).
+	  Root/Waist:     -X rotation leans FORWARD.
+]]
+
+local RunService = game:GetService("RunService")
+
+local Poses = {}
+
+type JointPose = { [string]: CFrame } -- joint (Motor6D) name -> target Transform
+
+local rad = math.rad
+
+local POSES: { [string]: JointPose } = {
+	Flight = {
+		RightShoulder = CFrame.Angles(rad(160), 0, rad(8)),
+		RightElbow = CFrame.Angles(rad(-5), 0, 0),
+		LeftShoulder = CFrame.Angles(rad(-15), 0, rad(-12)),
+		LeftElbow = CFrame.Angles(rad(-20), 0, 0),
+		RightHip = CFrame.Angles(rad(-8), 0, 0),
+		RightKnee = CFrame.Angles(rad(-10), 0, 0),
+		LeftHip = CFrame.Angles(rad(12), 0, 0),
+		LeftKnee = CFrame.Angles(rad(-45), 0, 0),
+		LeftAnkle = CFrame.Angles(rad(-25), 0, 0),
+		RightAnkle = CFrame.Angles(rad(-25), 0, 0),
+	},
+	Charge = {
+		RightShoulder = CFrame.Angles(rad(90), 0, rad(-5)),
+		RightElbow = CFrame.Angles(rad(0), 0, 0),
+		RightWrist = CFrame.Angles(rad(-20), 0, 0),
+		LeftShoulder = CFrame.Angles(rad(70), 0, rad(15)),
+		LeftElbow = CFrame.Angles(rad(-40), 0, 0),
+	},
+	Landing = {
+		Root = CFrame.new(0, -1.35, 0) * CFrame.Angles(rad(-20), 0, 0),
+		Waist = CFrame.Angles(rad(-18), 0, 0),
+		Neck = CFrame.Angles(rad(22), 0, 0),
+		LeftHip = CFrame.Angles(rad(80), 0, rad(-6)),
+		LeftKnee = CFrame.Angles(rad(-85), 0, 0),
+		LeftAnkle = CFrame.Angles(rad(10), 0, 0),
+		RightHip = CFrame.Angles(rad(-5), 0, rad(4)),
+		RightKnee = CFrame.Angles(rad(-95), 0, 0),
+		RightAnkle = CFrame.Angles(rad(-35), 0, 0),
+		RightShoulder = CFrame.Angles(rad(25), 0, rad(8)),
+		RightElbow = CFrame.Angles(rad(-5), 0, 0),
+		LeftShoulder = CFrame.Angles(rad(-40), 0, rad(-45)),
+		LeftElbow = CFrame.Angles(rad(-20), 0, 0),
+	},
+}
+
+-- Higher priority is applied later and wins on shared joints.
+local PRIORITY = { Flight = 1, Charge = 2, Landing = 3 }
+
+type Entry = {
+	name: string,
+	weight: number,
+	target: number, -- weight we are blending toward
+	fadeSpeed: number, -- weight units per second
+	expiresAt: number?,
+}
+
+type CharacterRecord = {
+	motors: { [string]: Motor6D },
+	entries: { [string]: Entry },
+	written: { [Motor6D]: CFrame },
+}
+
+local records: { [Model]: CharacterRecord } = {}
+local connection: RBXScriptConnection? = nil
+
+local function collectMotors(character: Model): { [string]: Motor6D }
+	local motors = {}
+	for _, descendant in character:GetDescendants() do
+		if descendant:IsA("Motor6D") then
+			motors[descendant.Name] = descendant
+		end
+	end
+	return motors
+end
+
+local function getRecord(character: Model): CharacterRecord
+	local record = records[character]
+	if not record then
+		record = { motors = collectMotors(character), entries = {}, written = {} }
+		records[character] = record
+		character.Destroying:Connect(function()
+			records[character] = nil
+		end)
+	end
+	return record
+end
+
+local function step(dt: number)
+	local now = os.clock()
+	for character, record in records do
+		if not character.Parent then
+			records[character] = nil
+			continue
+		end
+
+		-- Advance weights, collect active entries sorted by priority.
+		local active: { Entry } = {}
+		for name, entry in record.entries do
+			if entry.expiresAt and now >= entry.expiresAt then
+				entry.target = 0
+				entry.expiresAt = nil
+			end
+			local delta = entry.fadeSpeed * dt
+			if entry.weight < entry.target then
+				entry.weight = math.min(entry.target, entry.weight + delta)
+			else
+				entry.weight = math.max(entry.target, entry.weight - delta)
+			end
+			if entry.weight <= 0 and entry.target <= 0 then
+				record.entries[name] = nil
+			else
+				table.insert(active, entry)
+			end
+		end
+
+		if #active == 0 then
+			table.clear(record.written)
+			continue
+		end
+		table.sort(active, function(a, b)
+			return (PRIORITY[a.name] or 0) < (PRIORITY[b.name] or 0)
+		end)
+
+		-- Blend each touched joint once.
+		local results: { [Motor6D]: CFrame } = {}
+		for _, entry in active do
+			for jointName, target in POSES[entry.name] do
+				local motor = record.motors[jointName]
+				if not motor or not motor.Parent then
+					continue
+				end
+				local base = results[motor]
+				if not base then
+					-- If the animator did not overwrite Transform since our last
+					-- write, start from rest instead of compounding our own pose.
+					local current = motor.Transform
+					base = if record.written[motor] == current then CFrame.identity else current
+				end
+				results[motor] = (base :: CFrame):Lerp(target, entry.weight)
+			end
+		end
+		table.clear(record.written)
+		for motor, value in results do
+			motor.Transform = value
+			record.written[motor] = value
+		end
+	end
+end
+
+local function ensureRunning()
+	if connection then
+		return
+	end
+	assert(RunService:IsClient(), "Poses runs on the client only")
+	-- PreSimulation runs after the Animator has written this frame's Transforms.
+	connection = RunService.PreSimulation:Connect(step)
+end
+
+-- Hold a pose on/off (flight, charge).
+function Poses.setHeld(character: Model, name: string, held: boolean, fadeTime: number?)
+	assert(POSES[name], "Unknown pose " .. name)
+	ensureRunning()
+	local record = getRecord(character)
+	local entry = record.entries[name]
+	local speed = 1 / math.max(fadeTime or 0.2, 0.01)
+	if held then
+		if not entry then
+			-- Refresh joints: the record may predate the rig finishing loading,
+			-- and ApplyDescription can rebuild Motor6Ds.
+			record.motors = collectMotors(character)
+			entry = { name = name, weight = 0, target = 1, fadeSpeed = speed }
+			record.entries[name] = entry
+		end
+		entry.target = 1
+		entry.fadeSpeed = speed
+		entry.expiresAt = nil
+	elseif entry then
+		entry.target = 0
+		entry.fadeSpeed = speed
+	end
+end
+
+-- Play a pose once for `duration` seconds (landing).
+function Poses.play(character: Model, name: string, duration: number, fadeTime: number?)
+	Poses.setHeld(character, name, true, fadeTime or 0.08)
+	local entry = getRecord(character).entries[name]
+	entry.weight = 1 -- snap in: landings are an impact
+	entry.expiresAt = os.clock() + duration
+	entry.fadeSpeed = 1 / 0.3
+end
+
+-- Call when a character respawns so Motor6D references are refreshed.
+function Poses.forget(character: Model)
+	records[character] = nil
+end
+
+return Poses
+]]></ProtectedString></Properties></Item>
+<Item class="ModuleScript" referent="RBX00000008"><Properties><string name="Name">Remotes</string><ProtectedString name="Source"><![CDATA[--[[
+	All-Star :: Remotes (ModuleScript, ReplicatedStorage.AllStar.Remotes)
+
+	Creates (server) or finds (client) the three RemoteEvents the kit uses:
+
+	  Request  client -> server   (action: string, payload: any)   every ability request
+	  Feedback server -> client   (kind: string, ...)               cooldowns / denials
+	  Vfx      server -> clients  (kind: string, data: table)       cosmetic broadcasts
+
+	Only three remotes keeps the attack surface small; every Request is routed
+	through one validated entry point on the server (AbilityService).
+]]
+
+local RunService = game:GetService("RunService")
+
+local Remotes = {}
+
+local FOLDER_NAME = "Remotes"
+local NAMES = { "Request", "Feedback", "Vfx" }
+
+local folder: Folder? = nil
+
+local function getFolder(): Folder
+	if folder then
+		return folder
+	end
+	local parent = script.Parent
+	if RunService:IsServer() then
+		local existing = parent:FindFirstChild(FOLDER_NAME)
+		if existing and existing:IsA("Folder") then
+			folder = existing
+		else
+			local created = Instance.new("Folder")
+			created.Name = FOLDER_NAME
+			created.Parent = parent
+			folder = created
+		end
+	else
+		folder = parent:WaitForChild(FOLDER_NAME) :: Folder
+	end
+	return folder :: Folder
+end
+
+-- Server only: make sure every remote exists. Safe to call more than once.
+function Remotes.init()
+	assert(RunService:IsServer(), "Remotes.init() is server-only")
+	local f = getFolder()
+	for _, name in NAMES do
+		if not f:FindFirstChild(name) then
+			local remote = Instance.new("RemoteEvent")
+			remote.Name = name
+			remote.Parent = f
+		end
+	end
+end
+
+function Remotes.get(name: string): RemoteEvent
+	assert(table.find(NAMES, name), "Unknown remote: " .. tostring(name))
+	local f = getFolder()
+	if RunService:IsServer() then
+		Remotes.init()
+		return f:FindFirstChild(name) :: RemoteEvent
+	end
+	return f:WaitForChild(name) :: RemoteEvent
+end
+
+return Remotes
+]]></ProtectedString></Properties></Item>
+<Item class="ModuleScript" referent="RBX00000009"><Properties><string name="Name">StarShape</string><ProtectedString name="Source"><![CDATA[--[[
+	All-Star :: StarShape (ModuleScript, ReplicatedStorage.AllStar.StarShape)
+
+	Builds the flat compass-star emblem (4 long points + 4 short diagonal points)
+	out of WedgeParts, so the emblem needs no uploaded decal/texture asset.
+
+	Geometry notes
+	--------------
+	A WedgePart's cross-section is a right triangle. Its right angle sits on the
+	bottom-back edge; one leg runs along local -Z (length Size.Z) and the other
+	along local +Y (length Size.Y); Size.X is the thickness.
+	`placeTriangle` maps that triangle onto any right triangle given by a vertex
+	P and two perpendicular legs a, b (all in the star's local plane, where the
+	plane is X/Y and +Z is the emblem's facing normal).
+
+	A star point is a thin diamond made of 4 such triangles.
+]]
+
+local StarShape = {}
+
+export type StarOptions = {
+	OuterRadius: number, -- length of the 4 main points
+	Width: number, -- half-width of the main points at the center
+	MinorRadius: number?, -- length of the diagonal points (default 0.55 * OuterRadius)
+	Thickness: number?,
+	Color: Color3,
+	Material: Enum.Material?,
+	Name: string?,
+}
+
+local function placeTriangle(
+	frame: CFrame,
+	p: Vector3,
+	a: Vector3,
+	b: Vector3,
+	thickness: number,
+	template: WedgePart
+): (WedgePart, CFrame)
+	local zAxis = frame:VectorToWorldSpace(-a.Unit)
+	local yAxis = frame:VectorToWorldSpace(b.Unit)
+	local xAxis = yAxis:Cross(zAxis)
+	local center = frame:PointToWorldSpace(p + a / 2 + b / 2)
+
+	local wedge = template:Clone()
+	wedge.Size = Vector3.new(thickness, b.Magnitude, a.Magnitude)
+	local cf = CFrame.fromMatrix(center, xAxis, yAxis, zAxis)
+	wedge.CFrame = cf
+	return wedge, cf
+end
+
+-- Adds a diamond (one long point pair) built from 4 triangles.
+local function addDiamond(
+	frame: CFrame,
+	halfAlong: number,
+	halfAcross: number,
+	thickness: number,
+	template: WedgePart,
+	out: { WedgePart }
+)
+	for _, sx in { 1, -1 } do
+		for _, sy in { 1, -1 } do
+			local a = Vector3.new(sx * halfAcross, 0, 0)
+			local b = Vector3.new(0, sy * halfAlong, 0)
+			local wedge = placeTriangle(frame, Vector3.zero, a, b, thickness, template)
+			table.insert(out, wedge)
+		end
+	end
+end
+
+--[[
+	Builds the emblem centred on `frame` (frame.LookVector points AWAY from the
+	surface the star faces out of; i.e. +Z of `frame` is the visible normal).
+	Returns a Model whose parts are not yet welded or parented.
+]]
+function StarShape.build(frame: CFrame, options: StarOptions): (Model, { WedgePart })
+	local thickness = options.Thickness or 0.05
+	local minor = options.MinorRadius or options.OuterRadius * 0.55
+
+	local template = Instance.new("WedgePart")
+	template.Anchored = false
+	template.CanCollide = false
+	template.CanQuery = false
+	template.CanTouch = false
+	template.Massless = true
+	template.CastShadow = false
+	template.Color = options.Color
+	template.Material = options.Material or Enum.Material.Neon
+	template.TopSurface = Enum.SurfaceType.Smooth
+	template.BottomSurface = Enum.SurfaceType.Smooth
+
+	local parts: { WedgePart } = {}
+	-- Vertical and horizontal long points.
+	addDiamond(frame, options.OuterRadius, options.Width, thickness, template, parts)
+	addDiamond(frame * CFrame.Angles(0, 0, math.rad(90)), options.OuterRadius, options.Width, thickness, template, parts)
+	-- Short diagonal points.
+	addDiamond(frame * CFrame.Angles(0, 0, math.rad(45)), minor, options.Width * 0.7, thickness, template, parts)
+	addDiamond(frame * CFrame.Angles(0, 0, math.rad(-45)), minor, options.Width * 0.7, thickness, template, parts)
+
+	template:Destroy()
+
+	local model = Instance.new("Model")
+	model.Name = options.Name or "StarEmblem"
+	for i, part in parts do
+		part.Name = "StarPiece" .. i
+		part.Parent = model
+	end
+	return model, parts
+end
+
+return StarShape
+]]></ProtectedString></Properties></Item>
+<Item class="ModuleScript" referent="RBX00000010"><Properties><string name="Name">VFX</string><ProtectedString name="Source"><![CDATA[--[[
+	All-Star :: VFX (ModuleScript, ReplicatedStorage.AllStar.VFX) — CLIENT ONLY
+
+	Reusable builders for every cosmetic effect. All parts are created locally
+	on each client inside workspace.AllStarFX_Local, are anchored or massless,
+	and never collide, touch or block queries, so effects cost the server nothing.
+
+	Only built-in rbxasset:// particle textures are used, so nothing needs to be
+	uploaded. Swap them for your own decals later if you want.
+]]
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+
+local Config = require(script.Parent:WaitForChild("Config"))
+
+local VFX = {}
+
+local WHITE = Config.Colors.EnergyWhite
+local CYAN = Config.Colors.EnergyCyan
+
+local TEX_SPARKLE = "rbxasset://textures/particles/sparkles_main.dds"
+local TEX_SMOKE = "rbxasset://textures/particles/smoke_main.dds"
+
+local container: Folder? = nil
+
+function VFX.getContainer(): Folder
+	if container and container.Parent then
+		return container
+	end
+	local folder = Instance.new("Folder")
+	folder.Name = "AllStarFX_Local"
+	folder.Parent = workspace
+	container = folder
+	return folder
+end
+
+local function makePart(props: { [string]: any }): Part
+	local part = Instance.new("Part")
+	part.Anchored = true
+	part.CanCollide = false
+	part.CanQuery = false
+	part.CanTouch = false
+	part.CastShadow = false
+	part.Material = Enum.Material.Neon
+	part.TopSurface = Enum.SurfaceType.Smooth
+	part.BottomSurface = Enum.SurfaceType.Smooth
+	for key, value in props do
+		(part :: any)[key] = value
+	end
+	return part
+end
+
+local function energySequence(): ColorSequence
+	return ColorSequence.new({
+		ColorSequenceKeypoint.new(0, WHITE),
+		ColorSequenceKeypoint.new(1, CYAN),
+	})
+end
+
+local function tween(instance: Instance, time: number, goal: { [string]: any }, style: Enum.EasingStyle?)
+	local info = TweenInfo.new(time, style or Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	local t = TweenService:Create(instance, info, goal)
+	t:Play()
+	return t
+end
+
+-- CFrame whose X axis (a Cylinder's axis) points along `axis`.
+local function axisFrame(position: Vector3, axis: Vector3): CFrame
+	local helper = if math.abs(axis:Dot(Vector3.yAxis)) < 0.9 then Vector3.yAxis else Vector3.xAxis
+	local perpendicular = axis:Cross(helper).Unit
+	return CFrame.fromMatrix(position, axis, perpendicular)
+end
+
+local function burstEmitter(parent: Instance, props: { [string]: any }, count: number): ParticleEmitter
+	local emitter = Instance.new("ParticleEmitter")
+	emitter.Enabled = false
+	emitter.LightEmission = 1
+	emitter.Texture = TEX_SPARKLE
+	for key, value in props do
+		(emitter :: any)[key] = value
+	end
+	emitter.Parent = parent
+	emitter:Emit(count)
+	return emitter
+end
+
+--------------------------------------------------------------------------
+-- Projectile
+--------------------------------------------------------------------------
+export type Projectile = {
+	core: Part,
+	shell: Part,
+	setCFrame: (cf: CFrame) -> (),
+	destroy: () -> (),
+}
+
+function VFX.createProjectile(radius: number, charge: number): Projectile
+	local folder = VFX.getContainer()
+	local diameter = radius * 2
+
+	local core = makePart({
+		Name = "BlastCore",
+		Shape = Enum.PartType.Ball,
+		Size = Vector3.one * diameter * 0.65,
+		Color = WHITE,
+	})
+	local shell = makePart({
+		Name = "BlastShell",
+		Shape = Enum.PartType.Ball,
+		Size = Vector3.one * diameter * 1.1,
+		Color = CYAN,
+		Transparency = 0.55,
+	})
+
+	local a0 = Instance.new("Attachment")
+	a0.Position = Vector3.new(0, radius * 0.6, 0)
+	a0.Parent = core
+	local a1 = Instance.new("Attachment")
+	a1.Position = Vector3.new(0, -radius * 0.6, 0)
+	a1.Parent = core
+
+	local trail = Instance.new("Trail")
+	trail.Attachment0 = a0
+	trail.Attachment1 = a1
+	trail.Color = energySequence()
+	trail.Transparency = NumberSequence.new(0.1, 1)
+	trail.Lifetime = 0.18 + 0.15 * charge
+	trail.LightEmission = 1
+	trail.FaceCamera = true
+	trail.Parent = core
+
+	local light = Instance.new("PointLight")
+	light.Color = CYAN
+	light.Range = 8 + 10 * charge
+	light.Brightness = 2
+	light.Parent = core
+
+	core.Parent = folder
+	shell.Parent = folder
+
+	return {
+		core = core,
+		shell = shell,
+		setCFrame = function(cf: CFrame)
+			core.CFrame = cf
+			shell.CFrame = cf
+		end,
+		destroy = function()
+			core:Destroy()
+			shell:Destroy()
+		end,
+	}
+end
+
+--------------------------------------------------------------------------
+-- Muzzle flash (local, instant feedback before the server echo arrives)
+--------------------------------------------------------------------------
+function VFX.muzzleFlash(position: Vector3, charge: number)
+	local size = 1.2 + 2 * charge
+	local flash = makePart({
+		Shape = Enum.PartType.Ball,
+		Size = Vector3.one * size,
+		CFrame = CFrame.new(position),
+		Color = WHITE,
+		Transparency = 0.1,
+	})
+	flash.Parent = VFX.getContainer()
+	tween(flash, 0.15, { Size = Vector3.one * size * 1.8, Transparency = 1 })
+	task.delay(0.2, flash.Destroy, flash)
+end
+
+--------------------------------------------------------------------------
+-- Impact / explosion
+--------------------------------------------------------------------------
+function VFX.impact(position: Vector3, normal: Vector3, charge: number, explosive: boolean, radius: number)
+	local folder = VFX.getContainer()
+	local cf = CFrame.new(position)
+
+	if explosive then
+		local blastSize = radius * 2
+		local flash = makePart({
+			Shape = Enum.PartType.Ball,
+			Size = Vector3.one * 1,
+			CFrame = cf,
+			Color = WHITE,
+			Transparency = 0,
+		})
+		local shell = makePart({
+			Shape = Enum.PartType.Ball,
+			Size = Vector3.one * 2,
+			CFrame = cf,
+			Color = CYAN,
+			Transparency = 0.35,
+		})
+		local ringAxis = if normal.Magnitude > 0.5 then normal.Unit else Vector3.yAxis
+		local ring = makePart({
+			Shape = Enum.PartType.Cylinder,
+			Size = Vector3.new(0.3, 2, 2),
+			CFrame = axisFrame(position, ringAxis),
+			Color = CYAN,
+			Transparency = 0.2,
+		})
+		flash.Parent = folder
+		shell.Parent = folder
+		ring.Parent = folder
+
+		local light = Instance.new("PointLight")
+		light.Color = CYAN
+		light.Range = radius * 2.5
+		light.Brightness = 6
+		light.Parent = flash
+
+		tween(flash, 0.25, { Size = Vector3.one * blastSize * 0.8, Transparency = 1 })
+		tween(shell, 0.45, { Size = Vector3.one * blastSize, Transparency = 1 })
+		tween(ring, 0.5, { Size = Vector3.new(0.3, blastSize * 1.6, blastSize * 1.6), Transparency = 1 })
+		tween(light, 0.45, { Brightness = 0 })
+
+		local holder = makePart({ Size = Vector3.one * 0.2, CFrame = cf, Transparency = 1 })
+		holder.Parent = folder
+		local attachment = Instance.new("Attachment")
+		attachment.Parent = holder
+		burstEmitter(attachment, {
+			Color = energySequence(),
+			Size = NumberSequence.new(1.2, 0),
+			Speed = NumberRange.new(radius * 2, radius * 4),
+			SpreadAngle = Vector2.new(180, 180),
+			Lifetime = NumberRange.new(0.3, 0.6),
+			Drag = 4,
+		}, 40)
+		burstEmitter(attachment, {
+			Texture = TEX_SMOKE,
+			LightEmission = 0.3,
+			Color = ColorSequence.new(Color3.fromRGB(200, 230, 255)),
+			Transparency = NumberSequence.new(0.4, 1),
+			Size = NumberSequence.new(radius * 0.4, radius * 0.9),
+			Speed = NumberRange.new(radius, radius * 2),
+			SpreadAngle = Vector2.new(180, 180),
+			Lifetime = NumberRange.new(0.6, 1.1),
+			Drag = 3,
+		}, 14)
+
+		task.delay(1.4, function()
+			flash:Destroy()
+			shell:Destroy()
+			ring:Destroy()
+			holder:Destroy()
+		end)
+		VFX.shakeIfNear(position, radius * 3, 0.6, 0.35)
+	else
+		local size = 1.5 + 2 * charge
+		local spark = makePart({
+			Shape = Enum.PartType.Ball,
+			Size = Vector3.one * size,
+			CFrame = cf,
+			Color = CYAN,
+			Transparency = 0.2,
+		})
+		spark.Parent = folder
+		local attachment = Instance.new("Attachment")
+		attachment.Parent = spark
+		burstEmitter(attachment, {
+			Color = energySequence(),
+			Size = NumberSequence.new(0.5, 0),
+			Speed = NumberRange.new(10, 22),
+			SpreadAngle = Vector2.new(70, 70),
+			EmissionDirection = Enum.NormalId.Top,
+			Lifetime = NumberRange.new(0.15, 0.35),
+		}, 12)
+		tween(spark, 0.2, { Size = Vector3.one * size * 2, Transparency = 1 })
+		task.delay(0.5, spark.Destroy, spark)
+	end
+end
+
+--------------------------------------------------------------------------
+-- Charge orb (follows a hand)
+--------------------------------------------------------------------------
+export type ChargeOrb = { update: (alpha: number) -> (), destroy: () -> () }
+
+function VFX.createChargeOrb(hand: BasePart): ChargeOrb
+	local folder = VFX.getContainer()
+	local orb = makePart({
+		Name = "ChargeOrb",
+		Shape = Enum.PartType.Ball,
+		Size = Vector3.one * 0.4,
+		Color = WHITE,
+		Anchored = false,
+		Massless = true,
+	})
+	local halo = makePart({
+		Name = "ChargeHalo",
+		Shape = Enum.PartType.Ball,
+		Size = Vector3.one * 0.8,
+		Color = CYAN,
+		Transparency = 0.6,
+		Anchored = false,
+		Massless = true,
+	})
+	-- Hand-space offset: with the arm extended, the hand's -Y points forward.
+	local offset = CFrame.new(0, -0.75, 0)
+	for _, part in { orb, halo } do
+		part.CFrame = hand.CFrame * offset
+		local weld = Instance.new("Weld")
+		weld.Part0 = hand
+		weld.Part1 = part
+		weld.C0 = offset
+		weld.Parent = part
+		part.Parent = folder
+	end
+
+	local attachment = Instance.new("Attachment")
+	attachment.Parent = orb
+	local inward = Instance.new("ParticleEmitter")
+	inward.Texture = TEX_SPARKLE
+	inward.LightEmission = 1
+	inward.Color = energySequence()
+	inward.Size = NumberSequence.new(0.35, 0)
+	inward.Shape = Enum.ParticleEmitterShape.Sphere
+	inward.ShapeInOut = Enum.ParticleEmitterShapeInOut.Inward
+	inward.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
+	inward.Speed = NumberRange.new(4, 6)
+	inward.Lifetime = NumberRange.new(0.25, 0.35)
+	inward.Rate = 20
+	inward.Parent = attachment
+
+	local light = Instance.new("PointLight")
+	light.Color = CYAN
+	light.Brightness = 1
+	light.Range = 6
+	light.Parent = orb
+
+	local alive = true
+	return {
+		update = function(alpha: number)
+			if not alive then
+				return
+			end
+			local pulse = 1 + 0.08 * math.sin(os.clock() * 18)
+			orb.Size = Vector3.one * (0.4 + 1.4 * alpha) * pulse
+			halo.Size = Vector3.one * (0.8 + 2.4 * alpha) * pulse
+			halo.Transparency = 0.6 - 0.25 * alpha
+			inward.Rate = 20 + 120 * alpha
+			light.Range = 6 + 10 * alpha
+			light.Brightness = 1 + 3 * alpha
+		end,
+		destroy = function()
+			alive = false
+			orb:Destroy()
+			halo:Destroy()
+		end,
+	}
+end
+
+--------------------------------------------------------------------------
+-- Superhero landing
+--------------------------------------------------------------------------
+function VFX.landing(position: Vector3, normal: Vector3, intensity: number)
+	local folder = VFX.getContainer()
+	local up = if normal.Magnitude > 0.5 then normal.Unit else Vector3.yAxis
+	local tangent = if math.abs(up:Dot(Vector3.xAxis)) < 0.9 then up:Cross(Vector3.xAxis).Unit else up:Cross(Vector3.zAxis).Unit
+	local groundCF = CFrame.fromMatrix(position + up * 0.05, tangent, up)
+	local reach = Config.Landing.ShockwaveRadius * (0.8 + 0.6 * intensity)
+
+	-- Shockwave rings (cylinder axis = part X, so align X with the normal).
+	for i, color in { WHITE, CYAN } do
+		local ring = makePart({
+			Shape = Enum.PartType.Cylinder,
+			Size = Vector3.new(0.2, 2, 2),
+			CFrame = CFrame.fromMatrix(position + up * (0.1 * i), up, tangent),
+			Color = color,
+			Transparency = 0.15,
+		})
+		ring.Parent = folder
+		tween(ring, 0.45 + 0.15 * i, {
+			Size = Vector3.new(0.2, reach * 2, reach * 2),
+			Transparency = 1,
+		})
+		task.delay(0.8, ring.Destroy, ring)
+	end
+
+	-- Radial ground cracks.
+	local crackCount = 8
+	for i = 1, crackCount do
+		local angle = (i / crackCount) * math.pi * 2 + math.random() * 0.3
+		local length = 3 + math.random() * 4 * (0.5 + intensity)
+		local crack = makePart({
+			Material = Enum.Material.SmoothPlastic,
+			Size = Vector3.new(0.25, 0.08, length),
+			Color = Color3.fromRGB(25, 25, 30),
+			CFrame = groundCF * CFrame.Angles(0, angle, 0) * CFrame.new(0, 0, -length / 2 - 0.6),
+		})
+		crack.Parent = folder
+		task.delay(2.2, function()
+			tween(crack, 0.6, { Transparency = 1 })
+			task.delay(0.7, crack.Destroy, crack)
+		end)
+	end
+
+	-- Dust + energy burst.
+	local holder = makePart({ Size = Vector3.one * 0.2, CFrame = groundCF, Transparency = 1 })
+	holder.Parent = folder
+	local attachment = Instance.new("Attachment")
+	attachment.Parent = holder
+	burstEmitter(attachment, {
+		Texture = TEX_SMOKE,
+		LightEmission = 0,
+		Color = ColorSequence.new(Color3.fromRGB(170, 170, 180)),
+		Transparency = NumberSequence.new(0.35, 1),
+		Size = NumberSequence.new(1.5, 4),
+		Speed = NumberRange.new(14, 26),
+		SpreadAngle = Vector2.new(5, 180),
+		EmissionDirection = Enum.NormalId.Top,
+		Lifetime = NumberRange.new(0.6, 1.2),
+		Drag = 4,
+		Acceleration = Vector3.new(0, -6, 0),
+	}, 24)
+	burstEmitter(attachment, {
+		Color = energySequence(),
+		Size = NumberSequence.new(0.6, 0),
+		Speed = NumberRange.new(20, 40),
+		SpreadAngle = Vector2.new(60, 60),
+		EmissionDirection = Enum.NormalId.Top,
+		Lifetime = NumberRange.new(0.3, 0.6),
+		Drag = 3,
+	}, 30)
+	task.delay(1.6, holder.Destroy, holder)
+
+	VFX.shakeIfNear(position, reach * 2, 0.5 + 0.5 * intensity, 0.4)
+end
+
+--------------------------------------------------------------------------
+-- Flight trails (hands + feet). Returns a cleanup function.
+--------------------------------------------------------------------------
+function VFX.attachFlightTrails(character: Model): () -> ()
+	local created: { Instance } = {}
+	for _, limbName in { "LeftFoot", "RightFoot", "LeftHand", "RightHand" } do
+		local limb = character:FindFirstChild(limbName)
+		if not limb or not limb:IsA("BasePart") then
+			continue
+		end
+		local a0 = Instance.new("Attachment")
+		a0.Name = "AllStarTrailA"
+		a0.Position = Vector3.new(0.15, 0, 0)
+		a0.Parent = limb
+		local a1 = Instance.new("Attachment")
+		a1.Name = "AllStarTrailB"
+		a1.Position = Vector3.new(-0.15, 0, 0)
+		a1.Parent = limb
+		local trail = Instance.new("Trail")
+		trail.Attachment0 = a0
+		trail.Attachment1 = a1
+		trail.Color = energySequence()
+		trail.Transparency = NumberSequence.new(0.3, 1)
+		trail.Lifetime = 0.35
+		trail.MinLength = 0.2
+		trail.LightEmission = 1
+		trail.FaceCamera = true
+		trail.Parent = limb
+		table.insert(created, trail)
+		table.insert(created, a0)
+		table.insert(created, a1)
+	end
+	return function()
+		for _, instance in created do
+			instance:Destroy()
+		end
+	end
+end
+
+--------------------------------------------------------------------------
+-- Camera shake for the LOCAL player (uses Humanoid.CameraOffset).
+--------------------------------------------------------------------------
+local shakeToken = 0
+
+function VFX.shake(magnitude: number, duration: number)
+	local character = Players.LocalPlayer.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if not humanoid then
+		return
+	end
+	shakeToken += 1
+	local token = shakeToken
+	local start = os.clock()
+	local connection: RBXScriptConnection
+	connection = RunService.PreRender:Connect(function()
+		local t = os.clock() - start
+		if token ~= shakeToken or t >= duration or not humanoid.Parent then
+			connection:Disconnect()
+			if token == shakeToken and humanoid.Parent then
+				humanoid.CameraOffset = Vector3.zero
+			end
+			return
+		end
+		local falloff = 1 - t / duration
+		local m = magnitude * falloff
+		humanoid.CameraOffset = Vector3.new((math.random() - 0.5) * m, (math.random() - 0.5) * m, 0)
+	end)
+end
+
+function VFX.shakeIfNear(position: Vector3, range: number, magnitude: number, duration: number)
+	local camera = workspace.CurrentCamera
+	if not camera then
+		return
+	end
+	local distance = (camera.CFrame.Position - position).Magnitude
+	if distance <= range then
+		VFX.shake(magnitude * (1 - distance / range), duration)
+	end
+end
+
+return VFX
+]]></ProtectedString></Properties></Item>
+<Item class="ModuleScript" referent="RBX00000011"><Properties><string name="Name">Validation</string><ProtectedString name="Source"><![CDATA[--[[
+	All-Star :: Validation (ModuleScript, ReplicatedStorage.AllStar.Validation)
+
+	Pure helper functions for checking untrusted values that arrive over
+	RemoteEvents. Never trust anything a client sends: type, range, NaN and
+	infinity are all checked here.
+]]
+
+local Validation = {}
+
+local MAX_COORD = 1e6
+
+function Validation.isFiniteNumber(value: any): boolean
+	return typeof(value) == "number" and value == value and value > -math.huge and value < math.huge
+end
+
+function Validation.isFiniteVector3(value: any, maxAbs: number?): boolean
+	if typeof(value) ~= "Vector3" then
+		return false
+	end
+	local limit = maxAbs or MAX_COORD
+	for _, component in { value.X, value.Y, value.Z } do
+		if not Validation.isFiniteNumber(component) or math.abs(component) > limit then
+			return false
+		end
+	end
+	return true
+end
+
+-- A direction must be finite and (close to) length 1.
+function Validation.isUnitVector(value: any, tolerance: number): boolean
+	if not Validation.isFiniteVector3(value, 2) then
+		return false
+	end
+	return math.abs((value :: Vector3).Magnitude - 1) <= tolerance
+end
+
+function Validation.isBoolean(value: any): boolean
+	return typeof(value) == "boolean"
+end
+
+-- Returns character, humanoid, root only if the player is spawned and alive.
+function Validation.getAliveCharacter(player: Player): (Model?, Humanoid?, BasePart?)
+	local character = player.Character
+	if not character or not character.Parent then
+		return nil, nil, nil
+	end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	local root = character:FindFirstChild("HumanoidRootPart")
+	if not humanoid or humanoid.Health <= 0 or not root or not root:IsA("BasePart") then
+		return nil, nil, nil
+	end
+	return character, humanoid, root
+end
+
+return Validation
+]]></ProtectedString></Properties></Item>
+</Item>
+</Item>
+<Item class="ServerScriptService" referent="RBX00000024"><Properties><string name="Name">ServerScriptService</string></Properties><Item class="Script" referent="RBX00000023"><Properties><string name="Name">AllStarServer</string><ProtectedString name="Source"><![CDATA[--[[
+	All-Star :: Server bootstrap (Script, ServerScriptService.AllStarServer)
+
+	Wires every server module together and owns the single entry point for
+	client requests (Request RemoteEvent). Request pipeline:
+
+	  1. action must be a whitelisted string        (drops garbage silently)
+	  2. per-player token-bucket rate limit         (drops spam silently)
+	  3. player must be an All-Star (Config.Access)
+	  4. player must have a live character
+	  5. handler validates its own payload (type / range / NaN / cooldown)
+	  6. handler runs inside pcall so one bad request can't kill the listener
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("AllStar")
+local Config = require(Shared:WaitForChild("Config"))
+local Remotes = require(Shared:WaitForChild("Remotes"))
+local Validation = require(Shared:WaitForChild("Validation"))
+
+Remotes.init()
+
+local RateLimiter = require(script:WaitForChild("RateLimiter"))
+local PlayerState = require(script:WaitForChild("PlayerState"))
+local ServerNet = require(script:WaitForChild("ServerNet"))
+local FlightService = require(script:WaitForChild("FlightService"))
+local BlastService = require(script:WaitForChild("BlastService"))
+local LandingService = require(script:WaitForChild("LandingService"))
+local CharacterOutfitter = require(script:WaitForChild("CharacterOutfitter"))
+local TestArena = require(script:WaitForChild("TestArena"))
+
+local ACTIONS = Config.Actions
+local ATTR = Config.Attributes
+
+type Handler = (Player, PlayerState.State, Model, any) -> ()
+
+local handlers: { [string]: Handler } = {
+	[ACTIONS.ToggleFlight] = FlightService.handleToggle,
+	[ACTIONS.ChargeStart] = BlastService.handleChargeStart,
+	[ACTIONS.ChargeCancel] = BlastService.handleChargeCancel,
+	[ACTIONS.Fire] = BlastService.handleFire,
+	[ACTIONS.Land] = LandingService.handleLand,
+}
+
+local limiter = RateLimiter.new(Config.Security.RequestsPerSecond, Config.Security.RequestBurst)
+
+local function isHero(player: Player): boolean
+	return Config.Access.GrantToAllPlayers or player:GetAttribute(Config.Access.HeroAttribute) == true
+end
+
+Remotes.get("Request").OnServerEvent:Connect(function(player: Player, action: any, payload: any)
+	if typeof(action) ~= "string" then
+		return
+	end
+	local handler = handlers[action]
+	if not handler then
+		return
+	end
+	if not limiter:Allow(player) then
+		return
+	end
+	local state = PlayerState.get(player)
+	if not state then
+		return
+	end
+	if not isHero(player) then
+		ServerNet.deny(player, action, "not_hero")
+		return
+	end
+	local character = Validation.getAliveCharacter(player)
+	if not character then
+		return
+	end
+
+	local ok, err = pcall(handler, player, state, character, payload)
+	if not ok then
+		warn(string.format("[All-Star] %s request from %s errored: %s", action, player.Name, tostring(err)))
+	end
+end)
+
+--------------------------------------------------------------------------
+-- Player lifecycle
+--------------------------------------------------------------------------
+local function onCharacterAdded(player: Player, character: Model)
+	local state = PlayerState.get(player)
+	if state then
+		PlayerState.resetForCharacter(state)
+	end
+	character:SetAttribute(ATTR.Flying, false)
+	character:SetAttribute(ATTR.Charging, false)
+
+	local humanoid = character:WaitForChild("Humanoid", 10)
+	if humanoid and humanoid:IsA("Humanoid") then
+		humanoid.Died:Connect(function()
+			local current = PlayerState.get(player)
+			if current and player.Character == character then
+				PlayerState.resetForCharacter(current)
+				character:SetAttribute(ATTR.Flying, false)
+				character:SetAttribute(ATTR.Charging, false)
+			end
+		end)
+	end
+end
+
+local function onPlayerAdded(player: Player)
+	PlayerState.add(player)
+
+	player.CharacterAdded:Connect(function(character)
+		onCharacterAdded(player, character)
+	end)
+	player.CharacterAppearanceLoaded:Connect(function(character)
+		if isHero(player) then
+			CharacterOutfitter.apply(character)
+		end
+	end)
+
+	if player.Character then
+		onCharacterAdded(player, player.Character)
+		if player:HasAppearanceLoaded() and isHero(player) then
+			CharacterOutfitter.apply(player.Character)
+		end
+	end
+end
+
+Players.PlayerAdded:Connect(onPlayerAdded)
+for _, player in Players:GetPlayers() do
+	task.spawn(onPlayerAdded, player)
+end
+
+Players.PlayerRemoving:Connect(function(player)
+	PlayerState.remove(player)
+	limiter:Remove(player)
+end)
+
+FlightService.start()
+BlastService.start()
+
+if Config.Testing.BuildTestArena then
+	TestArena.build()
+end
+
+print(string.format("[All-Star] Server ready (v%s)", Config.Version))
+]]></ProtectedString></Properties><Item class="ModuleScript" referent="RBX00000014"><Properties><string name="Name">BlastService</string><ProtectedString name="Source"><![CDATA[--[[
+	All-Star :: BlastService (server ModuleScript)
+
+	Server-authoritative energy blasts.
+
+	  ChargeStart  -> server records the start time itself (client timing is ignored)
+	  Fire(dir)    -> server validates dir, computes charge from ITS clock,
+	                  spawns a simulated projectile at ITS idea of the hero's
+	                  position, and steps it with workspace:Spherecast.
+	  ChargeCancel -> clears the charge
+
+	No projectile parts exist on the server: projectiles are just tables, and
+	clients render them from the broadcast (origin, direction, speed, start time).
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Shared = ReplicatedStorage:WaitForChild("AllStar")
+local Config = require(Shared:WaitForChild("Config"))
+local Validation = require(Shared:WaitForChild("Validation"))
+
+local PlayerState = require(script.Parent:WaitForChild("PlayerState"))
+local ServerNet = require(script.Parent:WaitForChild("ServerNet"))
+local DamageService = require(script.Parent:WaitForChild("DamageService"))
+
+local BlastService = {}
+
+local BLAST = Config.Blast
+local ATTR = Config.Attributes
+
+type Projectile = {
+	id: number,
+	owner: Player,
+	state: PlayerState.State,
+	params: RaycastParams,
+	position: Vector3,
+	direction: Vector3,
+	radius: number,
+	traveled: number,
+	charge: number,
+	damage: number,
+	explosive: boolean,
+}
+
+local projectiles: { Projectile } = {}
+local nextId = 0
+
+local function lerp(a: number, b: number, t: number): number
+	return a + (b - a) * t
+end
+
+local function clearCharge(state: PlayerState.State, character: Model?)
+	state.charging = false
+	state.chargeToken += 1
+	if character then
+		character:SetAttribute(ATTR.Charging, false)
+	end
+end
+
+function BlastService.handleChargeStart(player: Player, state: PlayerState.State, character: Model, _payload: any)
+	if state.charging then
+		return
+	end
+	if not state.cooldowns:IsReady("Blast") then
+		ServerNet.deny(player, Config.Actions.ChargeStart, "cooldown")
+		return
+	end
+	state.charging = true
+	state.chargeStart = os.clock()
+	state.chargeToken += 1
+	local token = state.chargeToken
+	character:SetAttribute(ATTR.Charging, true)
+
+	-- Housekeeping: a client that never releases cannot hold a charge forever.
+	task.delay(BLAST.MaxHoldTime + 1, function()
+		if state.charging and state.chargeToken == token then
+			clearCharge(state, player.Character)
+		end
+	end)
+end
+
+function BlastService.handleChargeCancel(_player: Player, state: PlayerState.State, character: Model, _payload: any)
+	if state.charging then
+		clearCharge(state, character)
+	end
+end
+
+local function finish(projectile: Projectile, position: Vector3, normal: Vector3, hit: BasePart?)
+	projectile.state.activeBlasts = math.max(0, projectile.state.activeBlasts - 1)
+
+	if hit then
+		local humanoid, model = DamageService.getHumanoidFromPart(hit)
+		if humanoid and model then
+			DamageService.apply(projectile.owner, humanoid, model, projectile.damage)
+		end
+	end
+
+	local explosionRadius = 0
+	if projectile.explosive and hit then
+		explosionRadius = lerp(BLAST.ExplosionRadiusMin, BLAST.ExplosionRadiusMax, projectile.charge)
+		DamageService.explode(
+			projectile.owner,
+			position,
+			explosionRadius,
+			lerp(BLAST.ExplosionDamageMin, BLAST.ExplosionDamageMax, projectile.charge),
+			BLAST.ExplosionDamageMin * 0.5,
+			BLAST.NpcKnockback
+		)
+	end
+
+	ServerNet.broadcast("BlastEnd", {
+		id = projectile.id,
+		position = position,
+		normal = normal,
+		charge = projectile.charge,
+		impact = hit ~= nil,
+		explosive = projectile.explosive and hit ~= nil,
+		radius = explosionRadius,
+	})
+end
+
+function BlastService.handleFire(player: Player, state: PlayerState.State, character: Model, payload: any)
+	-- 1) Validate the only client-supplied value: the aim direction.
+	if not Validation.isUnitVector(payload, Config.Security.UnitVectorTolerance) then
+		return
+	end
+	local direction = (payload :: Vector3).Unit
+
+	-- 2) Cooldown and concurrency limits.
+	if not state.cooldowns:IsReady("Blast") then
+		ServerNet.deny(player, Config.Actions.Fire, "cooldown")
+		return
+	end
+	if state.activeBlasts >= BLAST.MaxActivePerPlayer or #projectiles >= BLAST.MaxActiveGlobal then
+		ServerNet.deny(player, Config.Actions.Fire, "limit")
+		return
+	end
+
+	-- 3) Charge comes from the server's own clock.
+	local charge = 0
+	if state.charging then
+		charge = math.clamp((os.clock() - state.chargeStart) / BLAST.ChargeTime, 0, 1)
+	end
+	clearCharge(state, character)
+	local explosive = charge >= BLAST.ExplosiveThreshold
+
+	local cooldown = if explosive then Config.Cooldowns.ChargedBlast else Config.Cooldowns.Blast
+	state.cooldowns:Start("Blast", cooldown)
+	ServerNet.cooldown(player, "Blast", cooldown)
+
+	-- 4) Origin from the server's view of the character, never from the client.
+	local root = character:FindFirstChild("HumanoidRootPart") :: BasePart
+	local origin = root.Position + Vector3.new(0, BLAST.OriginHeight, 0)
+
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { character }
+
+	nextId += 1
+	local projectile: Projectile = {
+		id = nextId,
+		owner = player,
+		state = state,
+		params = params,
+		position = origin,
+		direction = direction,
+		radius = lerp(BLAST.MinRadius, BLAST.MaxRadius, charge),
+		traveled = 0,
+		charge = charge,
+		damage = lerp(BLAST.MinDamage, BLAST.MaxDamage, charge),
+		explosive = explosive,
+	}
+	table.insert(projectiles, projectile)
+	state.activeBlasts += 1
+
+	ServerNet.broadcast("BlastFired", {
+		id = projectile.id,
+		ownerId = player.UserId,
+		origin = origin,
+		direction = direction,
+		speed = BLAST.ProjectileSpeed,
+		radius = projectile.radius,
+		charge = charge,
+		maxRange = BLAST.MaxRange,
+		startTime = workspace:GetServerTimeNow(),
+	})
+end
+
+local function step(dt: number)
+	for i = #projectiles, 1, -1 do
+		local projectile = projectiles[i]
+		local remaining = BLAST.MaxRange - projectile.traveled
+		local distance = math.min(BLAST.ProjectileSpeed * dt, remaining)
+		local result = workspace:Spherecast(
+			projectile.position,
+			projectile.radius,
+			projectile.direction * distance,
+			projectile.params
+		)
+		if result then
+			table.remove(projectiles, i)
+			finish(projectile, result.Position, result.Normal, result.Instance)
+		else
+			projectile.position += projectile.direction * distance
+			projectile.traveled += distance
+			if projectile.traveled >= BLAST.MaxRange - 1e-3 then
+				table.remove(projectiles, i)
+				finish(projectile, projectile.position, -projectile.direction, nil)
+			end
+		end
+	end
+end
+
+function BlastService.start()
+	RunService.PostSimulation:Connect(step)
+end
+
+return BlastService
+]]></ProtectedString></Properties></Item>
+<Item class="ModuleScript" referent="RBX00000015"><Properties><string name="Name">CharacterOutfitter</string><ProtectedString name="Source"><![CDATA[--[[
+	All-Star :: CharacterOutfitter (server ModuleScript)
+
+	Turns any R15 avatar into All-Star (helmetless Lunar Prime armor):
+
+	  1. HumanoidDescription pass: black body suit (body colors), skin-tone head,
+	     strips hats/face accessories (helmetless), optional catalog hair and
+	     clothing IDs from Config.Appearance.
+	  2. Procedural armor: black plates with white trim welded to each R15 limb,
+	     plus the white compass-star chest emblem built from WedgeParts.
+	  3. Procedural dark curly hair (cluster of small spheres) when no hair
+	     accessory ID is configured.
+
+	Everything is built on the server so all players see the same look. All
+	added parts are Massless, non-colliding and non-queryable, so they don't
+	change physics, block blasts or cost collision time.
+
+	See docs/CHARACTER_SPEC.md for the full design spec and for replacing these
+	procedural parts with modeled MeshParts later.
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("AllStar")
+local Config = require(Shared:WaitForChild("Config"))
+local StarShape = require(Shared:WaitForChild("StarShape"))
+
+local CharacterOutfitter = {}
+
+local COLORS = Config.Colors
+local APPEARANCE = Config.Appearance
+
+local OUTFIT_NAME = "AllStarOutfit"
+
+local function newPiece(name: string, size: Vector3, color: Color3, material: Enum.Material): Part
+	local part = Instance.new("Part")
+	part.Name = name
+	part.Size = size
+	part.Color = color
+	part.Material = material
+	part.Anchored = false
+	part.CanCollide = false
+	part.CanQuery = false
+	part.CanTouch = false
+	part.Massless = true
+	part.CastShadow = false
+	part.TopSurface = Enum.SurfaceType.Smooth
+	part.BottomSurface = Enum.SurfaceType.Smooth
+	return part
+end
+
+-- Welds `part` to `limb` at local offset `offset` and parents it to `folder`.
+local function attach(part: BasePart, limb: BasePart, offset: CFrame, folder: Instance)
+	part.CFrame = limb.CFrame * offset
+	local weld = Instance.new("Weld")
+	weld.Part0 = limb
+	weld.Part1 = part
+	weld.C0 = offset
+	weld.Parent = part
+	part.Parent = folder
+end
+
+local function limb(character: Model, name: string): BasePart?
+	local part = character:FindFirstChild(name)
+	if part and part:IsA("BasePart") then
+		return part
+	end
+	return nil
+end
+
+--------------------------------------------------------------------------
+-- 1. HumanoidDescription
+--------------------------------------------------------------------------
+local function applyDescription(humanoid: Humanoid)
+	local ok, description = pcall(humanoid.GetAppliedDescription, humanoid)
+	if not ok or not description then
+		warn("[All-Star] Could not read HumanoidDescription:", description)
+		return
+	end
+
+	-- Black under-suit; skin-tone head.
+	description.HeadColor = COLORS.Skin
+	description.TorsoColor = COLORS.ArmorBlack
+	description.LeftArmColor = COLORS.ArmorBlack
+	description.RightArmColor = COLORS.ArmorBlack
+	description.LeftLegColor = COLORS.ArmorBlack
+	description.RightLegColor = COLORS.ArmorBlack
+
+	description.Shirt = APPEARANCE.ShirtTemplateId
+	description.Pants = APPEARANCE.PantsTemplateId
+	description.GraphicTShirt = 0
+
+	if APPEARANCE.StripOtherAccessories then
+		-- Helmetless: remove every rigid + layered accessory first.
+		pcall(description.SetAccessories, description, {}, true)
+		description.HatAccessory = ""
+		description.FaceAccessory = ""
+		description.NeckAccessory = ""
+		description.ShouldersAccessory = ""
+		description.FrontAccessory = ""
+		description.BackAccessory = ""
+		description.WaistAccessory = ""
+		description.HairAccessory = ""
+	end
+	if APPEARANCE.HairAccessoryIds ~= "" then
+		description.HairAccessory = APPEARANCE.HairAccessoryIds
+	end
+
+	local applied, err = pcall(humanoid.ApplyDescription, humanoid, description)
+	if not applied then
+		warn("[All-Star] ApplyDescription failed (procedural parts still applied):", err)
+	end
+end
+
+--------------------------------------------------------------------------
+-- 2. Armor
+--------------------------------------------------------------------------
+local function buildArmor(character: Model, folder: Folder)
+	local black, trim, silver = COLORS.ArmorBlack, COLORS.ArmorTrim, COLORS.ArmorSilver
+	local metal = Enum.Material.Metal
+	local smooth = Enum.Material.SmoothPlastic
+
+	local upper = limb(character, "UpperTorso")
+	if upper then
+		local s = upper.Size
+		-- Chest plate.
+		attach(
+			newPiece("ChestPlate", Vector3.new(s.X * 0.96, s.Y * 0.72, 0.18), black, metal),
+			upper,
+			CFrame.new(0, s.Y * 0.1, -s.Z / 2 - 0.06),
+			folder
+		)
+		-- White V trim on the chest plate (two angled bars).
+		for _, side in { -1, 1 } do
+			attach(
+				newPiece("ChestTrim", Vector3.new(0.09, s.Y * 0.62, 0.06), trim, smooth),
+				upper,
+				CFrame.new(side * s.X * 0.22, s.Y * 0.08, -s.Z / 2 - 0.17) * CFrame.Angles(0, 0, side * math.rad(28)),
+				folder
+			)
+			-- Side stripe under the arm.
+			attach(
+				newPiece("SideStripe", Vector3.new(0.06, s.Y * 0.85, s.Z * 0.55), trim, smooth),
+				upper,
+				CFrame.new(side * (s.X / 2 + 0.02), 0, 0),
+				folder
+			)
+		end
+		-- High collar.
+		attach(
+			newPiece("Collar", Vector3.new(s.X * 0.62, 0.28, s.Z * 0.95), black, metal),
+			upper,
+			CFrame.new(0, s.Y / 2 + 0.08, 0),
+			folder
+		)
+		attach(
+			newPiece("CollarTrim", Vector3.new(s.X * 0.64, 0.05, s.Z * 0.97), trim, smooth),
+			upper,
+			CFrame.new(0, s.Y / 2 + 0.2, 0),
+			folder
+		)
+		-- Star emblem, built in UpperTorso local space then welded piece by piece.
+		-- Frame +Z must face out of the chest (torso -Z), hence the 180deg turn.
+		local emblemFrame = CFrame.new(0, s.Y * 0.12, -s.Z / 2 - 0.2) * CFrame.Angles(0, math.pi, 0)
+		local emblem, pieces = StarShape.build(emblemFrame, {
+			OuterRadius = s.Y * 0.32,
+			Width = s.Y * 0.07,
+			Thickness = 0.04,
+			Color = COLORS.EmblemWhite,
+			Material = Enum.Material.Neon,
+			Name = "StarEmblem",
+		})
+		for _, piece in pieces do
+			local localCF = piece.CFrame
+			piece.CFrame = upper.CFrame * localCF
+			local weld = Instance.new("Weld")
+			weld.Part0 = upper
+			weld.Part1 = piece
+			weld.C0 = localCF
+			weld.Parent = piece
+		end
+		emblem.Parent = folder
+	end
+
+	local lower = limb(character, "LowerTorso")
+	if lower then
+		local s = lower.Size
+		attach(
+			newPiece("Belt", Vector3.new(s.X * 1.04, 0.16, s.Z * 1.06), trim, smooth),
+			lower,
+			CFrame.new(0, s.Y * 0.3, 0),
+			folder
+		)
+	end
+
+	for _, side in { "Left", "Right" } do
+		local sign = if side == "Left" then -1 else 1
+
+		local upperArm = limb(character, side .. "UpperArm")
+		if upperArm then
+			local s = upperArm.Size
+			attach(
+				newPiece(side .. "ShoulderPad", Vector3.new(s.X * 1.3, s.Y * 0.42, s.Z * 1.3), black, metal),
+				upperArm,
+				CFrame.new(sign * 0.04, s.Y * 0.3, 0),
+				folder
+			)
+			attach(
+				newPiece(side .. "ShoulderTrim", Vector3.new(s.X * 1.34, 0.07, s.Z * 1.34), trim, smooth),
+				upperArm,
+				CFrame.new(sign * 0.04, s.Y * 0.08, 0),
+				folder
+			)
+		end
+
+		local lowerArm = limb(character, side .. "LowerArm")
+		if lowerArm then
+			local s = lowerArm.Size
+			attach(
+				newPiece(side .. "Gauntlet", Vector3.new(s.X * 1.12, s.Y * 0.6, s.Z * 1.12), black, metal),
+				lowerArm,
+				CFrame.new(0, -s.Y * 0.12, 0),
+				folder
+			)
+			attach(
+				newPiece(side .. "GauntletBand", Vector3.new(s.X * 1.16, 0.08, s.Z * 1.16), trim, smooth),
+				lowerArm,
+				CFrame.new(0, -s.Y * 0.36, 0),
+				folder
+			)
+		end
+
+		local upperLeg = limb(character, side .. "UpperLeg")
+		if upperLeg then
+			local s = upperLeg.Size
+			attach(
+				newPiece(side .. "ThighPlate", Vector3.new(s.X * 0.8, s.Y * 0.55, 0.14), black, metal),
+				upperLeg,
+				CFrame.new(0, s.Y * 0.05, -s.Z / 2 - 0.05),
+				folder
+			)
+			attach(
+				newPiece(side .. "ThighStripe", Vector3.new(0.07, s.Y * 0.9, s.Z * 0.5), trim, smooth),
+				upperLeg,
+				CFrame.new(sign * (s.X / 2 + 0.02), 0, 0),
+				folder
+			)
+		end
+
+		local lowerLeg = limb(character, side .. "LowerLeg")
+		if lowerLeg then
+			local s = lowerLeg.Size
+			attach(
+				newPiece(side .. "KneePad", Vector3.new(s.X * 0.85, s.Y * 0.28, 0.24), silver, metal),
+				lowerLeg,
+				CFrame.new(0, s.Y * 0.36, -s.Z / 2 - 0.08),
+				folder
+			)
+			attach(
+				newPiece(side .. "ShinGuard", Vector3.new(s.X * 1.1, s.Y * 0.55, s.Z * 1.1), black, metal),
+				lowerLeg,
+				CFrame.new(0, -s.Y * 0.12, 0),
+				folder
+			)
+			attach(
+				newPiece(side .. "ShinStripe", Vector3.new(0.07, s.Y * 0.55, 0.05), trim, smooth),
+				lowerLeg,
+				CFrame.new(0, -s.Y * 0.12, -s.Z * 0.55 - 0.03),
+				folder
+			)
+		end
+
+		local foot = limb(character, side .. "Foot")
+		if foot then
+			local s = foot.Size
+			attach(
+				newPiece(side .. "BootSole", Vector3.new(s.X * 1.08, s.Y * 0.35, s.Z * 1.08), trim, smooth),
+				foot,
+				CFrame.new(0, -s.Y * 0.32, 0),
+				folder
+			)
+		end
+	end
+end
+
+--------------------------------------------------------------------------
+-- 3. Procedural curly hair
+--------------------------------------------------------------------------
+local function buildHair(character: Model, folder: Folder)
+	local head = limb(character, "Head")
+	if not head then
+		return
+	end
+	local size = head.Size
+	local radius = math.max(size.X, size.Z) * 0.5
+	local rng = Random.new(1977) -- fixed seed: same haircut for everybody, every spawn
+	local count = APPEARANCE.HairCurlCount
+	local golden = math.pi * (3 - math.sqrt(5))
+	local model = Instance.new("Model")
+	model.Name = "CurlyHair"
+
+	for i = 0, count * 2 - 1 do
+		-- Fibonacci sphere over the whole head; keep the upper/back cap only.
+		local y = 1 - (i / (count * 2 - 1)) * 2
+		local ring = math.sqrt(1 - y * y)
+		local theta = golden * i
+		local dir = Vector3.new(math.cos(theta) * ring, y, math.sin(theta) * ring)
+
+		local isTop = dir.Y > -0.05
+		local isFace = dir.Z < -0.25 and dir.Y < 0.45 -- head front is -Z
+		local isBackOfNeck = dir.Z > 0.2 and dir.Y > -0.45
+		if not ((isTop and not isFace) or isBackOfNeck) then
+			continue
+		end
+
+		local curlSize = size.X * rng:NextNumber(0.26, 0.36)
+		local out = radius * rng:NextNumber(0.88, 1.02) + (if dir.Y > 0.5 then curlSize * 0.25 else 0)
+		local offset = CFrame.new(dir * out + Vector3.new(0, size.Y * 0.08, 0))
+		local curl = newPiece("Curl", Vector3.one * curlSize, COLORS.Hair, Enum.Material.SmoothPlastic)
+		curl.Shape = Enum.PartType.Ball
+		attach(curl, head, offset, model)
+	end
+	model.Parent = folder
+end
+
+--------------------------------------------------------------------------
+-- Public
+--------------------------------------------------------------------------
+function CharacterOutfitter.apply(character: Model)
+	if not APPEARANCE.Enabled then
+		return
+	end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid then
+		return
+	end
+	if humanoid.RigType ~= Enum.HumanoidRigType.R15 then
+		warn("[All-Star] Character is not R15; set Game Settings > Avatar to R15. Skipping outfit.")
+		return
+	end
+
+	applyDescription(humanoid)
+	if not character.Parent then
+		return -- died / left while the description was applying
+	end
+
+	local old = character:FindFirstChild(OUTFIT_NAME)
+	if old then
+		old:Destroy()
+	end
+	local folder = Instance.new("Folder")
+	folder.Name = OUTFIT_NAME
+
+	if APPEARANCE.ProceduralArmor then
+		buildArmor(character, folder)
+	end
+	if APPEARANCE.ProceduralHair and APPEARANCE.HairAccessoryIds == "" then
+		buildHair(character, folder)
+	end
+	folder.Parent = character
+end
+
+return CharacterOutfitter
+]]></ProtectedString></Properties></Item>
+<Item class="ModuleScript" referent="RBX00000016"><Properties><string name="Name">DamageService</string><ProtectedString name="Source"><![CDATA[--[[
+	All-Star :: DamageService (server ModuleScript)
+
+	The ONLY place damage is applied. Handles target lookup, PvP / team rules,
+	kill credit ("creator" ObjectValue tag), area damage with falloff and
+	line-of-sight, and knockback for server-owned NPC assemblies.
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("AllStar")
+local Config = require(Shared:WaitForChild("Config"))
+
+local DamageService = {}
+
+local MAX_OVERLAP_PARTS = 256
+
+-- Walks up from a hit part to the Model that owns a Humanoid (handles accessories).
+function DamageService.getHumanoidFromPart(part: BasePart): (Humanoid?, Model?)
+	local model = part:FindFirstAncestorOfClass("Model")
+	for _ = 1, 3 do
+		if not model then
+			return nil, nil
+		end
+		local humanoid = model:FindFirstChildOfClass("Humanoid")
+		if humanoid then
+			return humanoid, model
+		end
+		model = model:FindFirstAncestorOfClass("Model")
+	end
+	return nil, nil
+end
+
+function DamageService.canDamage(attacker: Player, humanoid: Humanoid, model: Model): boolean
+	if humanoid.Health <= 0 then
+		return false
+	end
+	if model == attacker.Character then
+		return false -- no self-damage
+	end
+	local victim = Players:GetPlayerFromCharacter(model)
+	if victim then
+		if not Config.Combat.PvPEnabled then
+			return false
+		end
+		if
+			not Config.Combat.FriendlyFire
+			and not attacker.Neutral
+			and not victim.Neutral
+			and attacker.Team ~= nil
+			and attacker.Team == victim.Team
+		then
+			return false
+		end
+	end
+	return true
+end
+
+local function tagCreator(humanoid: Humanoid, attacker: Player)
+	local existing = humanoid:FindFirstChild("creator")
+	if existing then
+		existing:Destroy()
+	end
+	local tag = Instance.new("ObjectValue")
+	tag.Name = "creator"
+	tag.Value = attacker
+	tag.Parent = humanoid
+	task.delay(Config.Combat.CreatorTagLifetime, function()
+		if tag.Parent then
+			tag:Destroy()
+		end
+	end)
+end
+
+function DamageService.apply(attacker: Player, humanoid: Humanoid, model: Model, amount: number): boolean
+	if amount <= 0 or not DamageService.canDamage(attacker, humanoid, model) then
+		return false
+	end
+	tagCreator(humanoid, attacker)
+	humanoid:TakeDamage(amount) -- respects ForceFields
+	return true
+end
+
+local function knockback(model: Model, from: Vector3, speed: number)
+	local root = model:FindFirstChild("HumanoidRootPart")
+	if not root or not root:IsA("BasePart") or root.Anchored then
+		return
+	end
+	-- Player characters are physically owned by their client; the server can
+	-- only push assemblies it owns (NPCs).
+	local ok, owner = pcall(root.GetNetworkOwner, root)
+	if not ok or owner ~= nil then
+		return
+	end
+	local direction = root.Position - from
+	direction = if direction.Magnitude > 0.01 then direction.Unit else Vector3.yAxis
+	direction = (direction + Vector3.new(0, 0.5, 0)).Unit
+	root:ApplyImpulse(direction * speed * root.AssemblyMass)
+end
+
+--[[
+	Radial damage. Damage falls off linearly from maxDamage at the centre to
+	minDamage at the edge. Targets behind solid geometry are skipped.
+	Returns how many humanoids were damaged.
+]]
+function DamageService.explode(
+	attacker: Player,
+	position: Vector3,
+	radius: number,
+	maxDamage: number,
+	minDamage: number,
+	knockbackSpeed: number?
+): number
+	local attackerCharacter = attacker.Character
+
+	local overlap = OverlapParams.new()
+	overlap.FilterType = Enum.RaycastFilterType.Exclude
+	overlap.FilterDescendantsInstances = if attackerCharacter then { attackerCharacter } else {}
+	overlap.MaxParts = MAX_OVERLAP_PARTS
+
+	local parts = workspace:GetPartBoundsInRadius(position, radius, overlap)
+	local seen: { [Humanoid]: boolean } = {}
+	local hits = 0
+
+	local losParams = RaycastParams.new()
+	losParams.FilterType = Enum.RaycastFilterType.Exclude
+
+	for _, part in parts do
+		local humanoid, model = DamageService.getHumanoidFromPart(part)
+		if not humanoid or not model or seen[humanoid] then
+			continue
+		end
+		seen[humanoid] = true
+
+		local root = model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart
+		local targetPos = if root and root:IsA("BasePart") then root.Position else part.Position
+		local offset = targetPos - position
+		local distance = offset.Magnitude
+
+		-- Line of sight: anything solid between blast and target blocks it.
+		if distance > 0.5 then
+			losParams.FilterDescendantsInstances = if attackerCharacter then { attackerCharacter, model } else { model }
+			local blocked = workspace:Raycast(position, offset, losParams)
+			if blocked and blocked.Instance.CanCollide then
+				continue
+			end
+		end
+
+		local falloff = 1 - math.clamp(distance / radius, 0, 1)
+		local amount = minDamage + (maxDamage - minDamage) * falloff
+		if DamageService.apply(attacker, humanoid, model, amount) then
+			hits += 1
+			if knockbackSpeed and knockbackSpeed > 0 then
+				knockback(model, position, knockbackSpeed * (0.4 + 0.6 * falloff))
+			end
+		end
+	end
+	return hits
+end
+
+return DamageService
+]]></ProtectedString></Properties></Item>
+<Item class="ModuleScript" referent="RBX00000017"><Properties><string name="Name">FlightService</string><ProtectedString name="Source"><![CDATA[--[[
+	All-Star :: FlightService (server ModuleScript)
+
+	Server owns the flight STATE (on/off, cooldown). The client owns the
+	character's physics (Roblox gives each player network ownership of their
+	character), so the client drives the actual movement for responsive
+	controls, and the server polices it:
+
+	  * flight only toggles through a validated, cooldown-gated request
+	  * velocity is sampled every Config.Security.MonitorInterval seconds;
+	    sustained speeds above the legit maximum add strikes and eventually
+	    force flight off with a longer cooldown
+	  * the same sampler records recent downward speed for landing validation
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Shared = ReplicatedStorage:WaitForChild("AllStar")
+local Config = require(Shared:WaitForChild("Config"))
+local Validation = require(Shared:WaitForChild("Validation"))
+
+local PlayerState = require(script.Parent:WaitForChild("PlayerState"))
+local ServerNet = require(script.Parent:WaitForChild("ServerNet"))
+
+local FlightService = {}
+
+local FLIGHT = Config.Flight
+local ATTR = Config.Attributes
+
+function FlightService.setFlying(_player: Player, state: PlayerState.State, character: Model, on: boolean)
+	state.flying = on
+	state.strikes = 0
+	character:SetAttribute(ATTR.Flying, on)
+end
+
+-- Remote handler: payload = desired state (boolean).
+function FlightService.handleToggle(player: Player, state: PlayerState.State, character: Model, payload: any)
+	if not Validation.isBoolean(payload) then
+		return
+	end
+	local wanted = payload :: boolean
+	if wanted == state.flying then
+		return -- already in that state; nothing to do
+	end
+	if not state.cooldowns:IsReady("FlightToggle") then
+		ServerNet.deny(player, Config.Actions.ToggleFlight, "cooldown")
+		return
+	end
+	FlightService.setFlying(player, state, character, wanted)
+	state.cooldowns:Start("FlightToggle", Config.Cooldowns.FlightToggle)
+	ServerNet.cooldown(player, "FlightToggle", Config.Cooldowns.FlightToggle)
+end
+
+function FlightService.forceStop(player: Player, state: PlayerState.State, cooldown: number?)
+	local character = player.Character
+	if state.flying and character then
+		FlightService.setFlying(player, state, character, false)
+	end
+	if cooldown then
+		state.cooldowns:Start("FlightToggle", cooldown)
+		ServerNet.cooldown(player, "FlightToggle", cooldown)
+	end
+end
+
+local function sample(player: Player, state: PlayerState.State, now: number)
+	local character, _, root = Validation.getAliveCharacter(player)
+	if not character or not root then
+		return
+	end
+	local velocity = root.AssemblyLinearVelocity
+
+	-- Landing support: remember the biggest recent downward speed.
+	local down = -velocity.Y
+	if down >= state.peakDownSpeed or now - state.peakDownAt > Config.Landing.RecentWindow then
+		state.peakDownSpeed = math.max(down, 0)
+		state.peakDownAt = now
+	end
+
+	if not state.flying then
+		return
+	end
+
+	-- Anti-exploit speed check while flying.
+	local horizontal = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
+	local tolerance = FLIGHT.SpeedTolerance
+	local tooFast = horizontal > FLIGHT.Speed * tolerance
+		or velocity.Y > FLIGHT.Speed * tolerance
+		or -velocity.Y > FLIGHT.DiveSpeed * tolerance
+
+	if tooFast then
+		state.strikes += 1
+		if state.strikes >= FLIGHT.StrikesBeforeRevoke then
+			warn(
+				string.format(
+					"[All-Star] Flight revoked for %s (speed h=%.0f v=%.0f)",
+					player.Name,
+					horizontal,
+					velocity.Y
+				)
+			)
+			FlightService.forceStop(player, state, FLIGHT.RevokeCooldown)
+			ServerNet.deny(player, Config.Actions.ToggleFlight, "speed")
+		end
+	else
+		state.strikes = math.max(0, state.strikes - 0.5)
+	end
+end
+
+function FlightService.start()
+	local accumulator = 0
+	RunService.PostSimulation:Connect(function(dt)
+		accumulator += dt
+		if accumulator < Config.Security.MonitorInterval then
+			return
+		end
+		accumulator = 0
+		local now = os.clock()
+		for player, state in PlayerState.all() do
+			if player.Parent == Players then
+				sample(player, state, now)
+			end
+		end
+	end)
+end
+
+return FlightService
+]]></ProtectedString></Properties></Item>
+<Item class="ModuleScript" referent="RBX00000018"><Properties><string name="Name">LandingService</string><ProtectedString name="Source"><![CDATA[--[[
+	All-Star :: LandingService (server ModuleScript)
+
+	Superhero landing. The client says "I just landed"; the server decides
+	whether that is true:
+
+	  * the hero must be near the ground (server-side raycast)
+	  * the server's own velocity sampler must have seen a downward speed
+	    >= Config.Landing.MinImpactSpeed within Config.Landing.RecentWindow
+	  * the Landing cooldown must be ready
+
+	A valid landing ends flight, deals optional shockwave damage and broadcasts
+	the effect. An invalid landing request still ends flight if the hero is on
+	the ground (a dive into the floor should always stop flying).
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("AllStar")
+local Config = require(Shared:WaitForChild("Config"))
+
+local PlayerState = require(script.Parent:WaitForChild("PlayerState"))
+local ServerNet = require(script.Parent:WaitForChild("ServerNet"))
+local DamageService = require(script.Parent:WaitForChild("DamageService"))
+local FlightService = require(script.Parent:WaitForChild("FlightService"))
+
+local LandingService = {}
+
+local LANDING = Config.Landing
+
+function LandingService.handleLand(player: Player, state: PlayerState.State, character: Model, _payload: any)
+	local root = character:FindFirstChild("HumanoidRootPart") :: BasePart
+
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { character }
+	local ground = workspace:Raycast(root.Position, Vector3.new(0, -LANDING.GroundCheckDistance, 0), params)
+	if not ground then
+		ServerNet.deny(player, Config.Actions.Land, "airborne")
+		return
+	end
+
+	if state.flying then
+		FlightService.setFlying(player, state, character, false)
+	end
+
+	local now = os.clock()
+	local recentEnough = now - state.peakDownAt <= LANDING.RecentWindow
+	if not recentEnough or state.peakDownSpeed < LANDING.MinImpactSpeed then
+		ServerNet.deny(player, Config.Actions.Land, "too_slow")
+		return
+	end
+	if not state.cooldowns:IsReady("Landing") then
+		ServerNet.deny(player, Config.Actions.Land, "cooldown")
+		return
+	end
+
+	local intensity = math.clamp(
+		(state.peakDownSpeed - LANDING.MinImpactSpeed) / (Config.Flight.DiveSpeed - LANDING.MinImpactSpeed),
+		0,
+		1
+	)
+	state.peakDownSpeed = 0
+	state.cooldowns:Start("Landing", Config.Cooldowns.Landing)
+	ServerNet.cooldown(player, "Landing", Config.Cooldowns.Landing)
+
+	if LANDING.ShockwaveDamage > 0 then
+		local radius = LANDING.ShockwaveRadius * (0.8 + 0.4 * intensity)
+		DamageService.explode(
+			player,
+			ground.Position,
+			radius,
+			LANDING.ShockwaveDamage * (1 + intensity),
+			LANDING.ShockwaveDamage * 0.4,
+			Config.Blast.NpcKnockback * 0.6
+		)
+	end
+
+	ServerNet.broadcast("Landing", {
+		ownerId = player.UserId,
+		position = ground.Position,
+		normal = ground.Normal,
+		intensity = intensity,
+	})
+end
+
+return LandingService
+]]></ProtectedString></Properties></Item>
+<Item class="ModuleScript" referent="RBX00000019"><Properties><string name="Name">PlayerState</string><ProtectedString name="Source"><![CDATA[--[[
+	All-Star :: PlayerState (server ModuleScript)
+
+	Authoritative per-player ability state. Lives only on the server; clients
+	never see or write it. Attributes on the character (Flying / Charging) are a
+	one-way MIRROR of this state for client VFX, never the source of truth.
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("AllStar")
+local CooldownTracker = require(Shared:WaitForChild("CooldownTracker"))
+
+export type State = {
+	cooldowns: CooldownTracker.CooldownTracker,
+	flying: boolean,
+	strikes: number,
+	charging: boolean,
+	chargeStart: number,
+	chargeToken: number,
+	activeBlasts: number,
+	peakDownSpeed: number, -- largest downward speed seen recently (studs/s)
+	peakDownAt: number, -- os.clock() of that sample
+}
+
+local PlayerState = {}
+
+local states: { [Player]: State } = {}
+
+function PlayerState.add(player: Player): State
+	local state: State = {
+		cooldowns = CooldownTracker.new(),
+		flying = false,
+		strikes = 0,
+		charging = false,
+		chargeStart = 0,
+		chargeToken = 0,
+		activeBlasts = 0,
+		peakDownSpeed = 0,
+		peakDownAt = 0,
+	}
+	states[player] = state
+	return state
+end
+
+function PlayerState.get(player: Player): State?
+	return states[player]
+end
+
+function PlayerState.remove(player: Player)
+	states[player] = nil
+end
+
+-- Called on every (re)spawn. Cooldowns intentionally persist across deaths.
+function PlayerState.resetForCharacter(state: State)
+	state.flying = false
+	state.strikes = 0
+	state.charging = false
+	state.chargeStart = 0
+	state.chargeToken += 1
+	state.peakDownSpeed = 0
+	state.peakDownAt = 0
+end
+
+function PlayerState.all(): { [Player]: State }
+	return states
+end
+
+return PlayerState
+]]></ProtectedString></Properties></Item>
+<Item class="ModuleScript" referent="RBX00000020"><Properties><string name="Name">RateLimiter</string><ProtectedString name="Source"><![CDATA[--[[
+	All-Star :: RateLimiter (server ModuleScript)
+
+	Per-player token bucket. Each remote request costs one token; tokens refill
+	at `rate` per second up to `burst`. Requests over the limit are dropped
+	silently, which stops remote-spam exploits from burning server CPU.
+]]
+
+local RateLimiter = {}
+RateLimiter.__index = RateLimiter
+
+type Bucket = { tokens: number, last: number }
+
+export type RateLimiter = typeof(setmetatable(
+	{} :: { _rate: number, _burst: number, _buckets: { [Player]: Bucket } },
+	RateLimiter
+))
+
+function RateLimiter.new(rate: number, burst: number): RateLimiter
+	return setmetatable({ _rate = rate, _burst = burst, _buckets = {} }, RateLimiter)
+end
+
+function RateLimiter.Allow(self: RateLimiter, player: Player, cost: number?): boolean
+	local now = os.clock()
+	local bucket = self._buckets[player]
+	if not bucket then
+		bucket = { tokens = self._burst, last = now }
+		self._buckets[player] = bucket
+	end
+	bucket.tokens = math.min(self._burst, bucket.tokens + (now - bucket.last) * self._rate)
+	bucket.last = now
+	local price = cost or 1
+	if bucket.tokens < price then
+		return false
+	end
+	bucket.tokens -= price
+	return true
+end
+
+function RateLimiter.Remove(self: RateLimiter, player: Player)
+	self._buckets[player] = nil
+end
+
+return RateLimiter
+]]></ProtectedString></Properties></Item>
+<Item class="ModuleScript" referent="RBX00000021"><Properties><string name="Name">ServerNet</string><ProtectedString name="Source"><![CDATA[--[[
+	All-Star :: ServerNet (server ModuleScript)
+
+	Thin wrapper around the Feedback and Vfx remotes so services never build
+	remote payloads by hand.
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("AllStar")
+local Remotes = require(Shared:WaitForChild("Remotes"))
+
+local feedback = Remotes.get("Feedback")
+local vfx = Remotes.get("Vfx")
+
+local ServerNet = {}
+
+-- Tell one client that `key` is on cooldown for `duration` seconds.
+function ServerNet.cooldown(player: Player, key: string, duration: number)
+	feedback:FireClient(player, "Cooldown", key, duration)
+end
+
+-- Tell one client a request was refused (HUD can flash / reset prediction).
+function ServerNet.deny(player: Player, action: string, reason: string)
+	feedback:FireClient(player, "Denied", action, reason)
+end
+
+-- Broadcast a cosmetic event to every client.
+function ServerNet.broadcast(kind: string, data: { [string]: any })
+	vfx:FireAllClients(kind, data)
+end
+
+return ServerNet
+]]></ProtectedString></Properties></Item>
+<Item class="ModuleScript" referent="RBX00000022"><Properties><string name="Name">TestArena</string><ProtectedString name="Source"><![CDATA[--[[
+	All-Star :: TestArena (server ModuleScript)
+
+	Optional test content (Config.Testing.BuildTestArena). Builds:
+	  * 5 respawning target dummies (simple Humanoid models, server-owned, so
+	    damage AND knockback can be tested solo)
+	  * a wall in front of one dummy (line-of-sight / blocked-explosion test)
+	  * a 60-stud jump tower (superhero landing from a fall without flight)
+
+	Disable it before publishing.
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("AllStar")
+local Config = require(Shared:WaitForChild("Config"))
+
+local TestArena = {}
+
+local ORIGIN = Vector3.new(0, 0, -60)
+
+local function anchoredPart(name: string, size: Vector3, cf: CFrame, color: Color3, parent: Instance): Part
+	local part = Instance.new("Part")
+	part.Name = name
+	part.Size = size
+	part.CFrame = cf
+	part.Color = color
+	part.Anchored = true
+	part.Material = Enum.Material.Concrete
+	part.TopSurface = Enum.SurfaceType.Smooth
+	part.BottomSurface = Enum.SurfaceType.Smooth
+	part.Parent = parent
+	return part
+end
+
+local function buildDummy(position: Vector3, parent: Instance)
+	local model = Instance.new("Model")
+	model.Name = "TargetDummy"
+
+	local root = Instance.new("Part")
+	root.Name = "HumanoidRootPart"
+	root.Size = Vector3.new(2, 2, 1)
+	root.Transparency = 1
+	root.CanCollide = false
+	root.CFrame = CFrame.new(position + Vector3.new(0, 3, 0))
+	root.Parent = model
+
+	local torso = Instance.new("Part")
+	torso.Name = "Torso"
+	torso.Size = Vector3.new(2, 3, 1)
+	torso.Color = Color3.fromRGB(60, 60, 70)
+	torso.CFrame = root.CFrame
+	torso.Parent = model
+
+	local head = Instance.new("Part")
+	head.Name = "Head"
+	head.Size = Vector3.new(1.2, 1.2, 1.2)
+	head.Color = Color3.fromRGB(90, 90, 100)
+	head.CFrame = root.CFrame * CFrame.new(0, 2.1, 0)
+	head.Parent = model
+
+	for _, part in { torso, head } do
+		local weld = Instance.new("WeldConstraint")
+		weld.Part0 = root
+		weld.Part1 = part
+		weld.Parent = part
+	end
+
+	-- No legs: R15-style HipHeight keeps the root hovering upright instead of tipping.
+	torso.CanCollide = false
+	head.CanCollide = false
+	root.CanCollide = true
+	local humanoid = Instance.new("Humanoid")
+	humanoid.RigType = Enum.HumanoidRigType.R15
+	humanoid.HipHeight = 2
+	humanoid.MaxHealth = 150
+	humanoid.Health = 150
+	humanoid.Parent = model
+
+	model.PrimaryPart = root
+	model.Parent = parent
+	root:SetNetworkOwner(nil) -- server owns it, so knockback works
+
+	humanoid.Died:Connect(function()
+		task.delay(Config.Testing.DummyRespawnTime, function()
+			model:Destroy()
+			buildDummy(position, parent)
+		end)
+	end)
+end
+
+function TestArena.build()
+	local folder = Instance.new("Folder")
+	folder.Name = "AllStarTestArena"
+	folder.Parent = workspace
+
+	for i = -2, 2 do
+		buildDummy(ORIGIN + Vector3.new(i * 12, 0, 0), folder)
+	end
+
+	-- LOS wall in front of the left-most dummy.
+	anchoredPart(
+		"CoverWall",
+		Vector3.new(8, 10, 1),
+		CFrame.new(ORIGIN + Vector3.new(-24, 5, 10)),
+		Color3.fromRGB(45, 45, 55),
+		folder
+	)
+
+	-- Jump tower with a top platform.
+	local towerBase = Vector3.new(40, 0, 0)
+	anchoredPart(
+		"JumpTower",
+		Vector3.new(10, 60, 10),
+		CFrame.new(towerBase + Vector3.new(0, 30, 0)),
+		Color3.fromRGB(30, 30, 38),
+		folder
+	)
+	-- Stairs: a simple spiral of steps around the tower.
+	for step = 0, 39 do
+		local angle = step * math.rad(30)
+		local height = 1.5 + step * 1.5
+		local offset = Vector3.new(math.cos(angle) * 8, height, math.sin(angle) * 8)
+		anchoredPart(
+			"Step",
+			Vector3.new(5, 1, 5),
+			CFrame.new(towerBase + offset),
+			Color3.fromRGB(70, 225, 255),
+			folder
+		)
+	end
+end
+
+return TestArena
+]]></ProtectedString></Properties></Item>
+</Item>
+</Item>
+<Item class="StarterPlayer" referent="RBX00000032"><Properties><string name="Name">StarterPlayer</string></Properties><Item class="StarterPlayerScripts" referent="RBX00000031"><Properties><string name="Name">StarterPlayerScripts</string></Properties><Item class="LocalScript" referent="RBX00000030"><Properties><string name="Name">AllStarClient</string><ProtectedString name="Source"><![CDATA[--[[
+	All-Star :: Client bootstrap (LocalScript, StarterPlayerScripts.AllStarClient)
+
+	Creates the HUD once, (re)creates per-character controllers on every spawn,
+	and routes all input (touch HUD, keyboard, mouse, gamepad) through one
+	`actions` table so every control scheme behaves the same.
+
+	Nothing here is trusted by the server. The client only ASKS for abilities;
+	the server decides (see ServerScriptService.AllStarServer).
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Shared = ReplicatedStorage:WaitForChild("AllStar")
+local Config = require(Shared:WaitForChild("Config"))
+local Remotes = require(Shared:WaitForChild("Remotes"))
+local CooldownTracker = require(Shared:WaitForChild("CooldownTracker"))
+local VFX = require(Shared:WaitForChild("VFX"))
+
+local FlightController = require(script:WaitForChild("FlightController"))
+local BlastController = require(script:WaitForChild("BlastController"))
+local EffectsController = require(script:WaitForChild("EffectsController"))
+local InputController = require(script:WaitForChild("InputController"))
+local HUD = require(script:WaitForChild("HUD"))
+
+local player = Players.LocalPlayer
+local request = Remotes.get("Request")
+local feedback = Remotes.get("Feedback")
+local ACTIONS = Config.Actions
+
+local cooldowns = CooldownTracker.new()
+
+-- Per-character state (replaced on every respawn).
+local flight: FlightController.FlightController? = nil
+local blast: BlastController.BlastController? = nil
+local humanoid: Humanoid? = nil
+local characterConnections: { RBXScriptConnection } = {}
+local animationTracks: { [string]: AnimationTrack } = {}
+
+local hud: HUD.HUD
+
+--------------------------------------------------------------------------
+-- Optional uploaded animations (Config.Animations). Empty IDs are skipped.
+--------------------------------------------------------------------------
+local function loadAnimations(hum: Humanoid)
+	table.clear(animationTracks)
+	local animator = hum:FindFirstChildOfClass("Animator")
+	if not animator then
+		return
+	end
+	for name, id in Config.Animations do
+		if id ~= "" then
+			local animation = Instance.new("Animation")
+			animation.AnimationId = id
+			local ok, track = pcall(animator.LoadAnimation, animator, animation)
+			if ok and track then
+				track.Priority = Enum.AnimationPriority.Action
+				track.Looped = name ~= "Landing"
+				animationTracks[name] = track
+			else
+				warn("[All-Star] Could not load animation", name, id)
+			end
+		end
+	end
+end
+
+local function setTrack(name: string, playing: boolean)
+	local track = animationTracks[name]
+	if not track then
+		return
+	end
+	if playing and not track.IsPlaying then
+		track:Play(0.15)
+	elseif not playing and track.IsPlaying then
+		track:Stop(0.2)
+	end
+end
+
+--------------------------------------------------------------------------
+-- Actions (shared by every input method)
+--------------------------------------------------------------------------
+local function requestLand()
+	request:FireServer(ACTIONS.Land)
+end
+
+local actions = {}
+
+function actions.toggleFlight()
+	if not flight then
+		return
+	end
+	if not cooldowns:IsReady("FlightToggle") then
+		hud:FlashDenied("FlightToggle")
+		return
+	end
+	request:FireServer(ACTIONS.ToggleFlight, not flight:IsFlying())
+end
+
+function actions.beginBlast(fromTouch: boolean)
+	if not blast then
+		return
+	end
+	if not cooldowns:IsReady("Blast") then
+		hud:FlashDenied("Blast")
+		return
+	end
+	blast:Begin(fromTouch)
+	setTrack("Charge", true)
+end
+
+function actions.releaseBlast()
+	if blast then
+		blast:Release()
+	end
+	setTrack("Charge", false)
+end
+
+function actions.land()
+	if flight and flight:IsFlying() then
+		flight:StartDive() -- dive; the landing fires when we hit the ground
+	end
+end
+
+function actions.setVertical(source: string, value: number)
+	if flight then
+		flight:SetVertical(source, value)
+	end
+end
+
+function actions.getCharge(): number?
+	return if blast then blast:GetCharge() else nil
+end
+
+function actions.isFlying(): boolean
+	return flight ~= nil and flight:IsFlying()
+end
+
+--------------------------------------------------------------------------
+-- Server feedback
+--------------------------------------------------------------------------
+feedback.OnClientEvent:Connect(function(kind: any, a: any, b: any)
+	if kind == "Cooldown" and typeof(a) == "string" and typeof(b) == "number" then
+		cooldowns:Start(a, b)
+	elseif kind == "Denied" and typeof(a) == "string" then
+		if a == ACTIONS.Fire and b == "limit" then
+			cooldowns:Reset("Blast") -- our prediction was wrong
+		end
+		local key = if a == ACTIONS.ToggleFlight
+			then "FlightToggle"
+			elseif a == ACTIONS.Land then "Landing"
+			else "Blast"
+		if b ~= "too_slow" and b ~= "airborne" then
+			hud:FlashDenied(key)
+		end
+	end
+end)
+
+--------------------------------------------------------------------------
+-- Local landing reaction (movement lock while the pose plays)
+--------------------------------------------------------------------------
+EffectsController.onLocalLanding = function(_intensity: number)
+	local hum = humanoid
+	if not hum then
+		return
+	end
+	setTrack("Landing", true)
+	local previousSpeed = hum.WalkSpeed
+	hum.WalkSpeed = 0
+	task.delay(Config.Landing.MoveLockTime, function()
+		if hum.Parent and hum.WalkSpeed == 0 then
+			hum.WalkSpeed = previousSpeed
+		end
+	end)
+end
+
+--------------------------------------------------------------------------
+-- Character lifecycle
+--------------------------------------------------------------------------
+local function cleanupCharacter()
+	for _, connection in characterConnections do
+		connection:Disconnect()
+	end
+	table.clear(characterConnections)
+	if flight then
+		flight:Destroy()
+		flight = nil
+	end
+	if blast then
+		blast:Destroy()
+		blast = nil
+	end
+	humanoid = nil
+	table.clear(animationTracks)
+end
+
+local function onCharacterAdded(character: Model)
+	cleanupCharacter()
+
+	local hum = character:WaitForChild("Humanoid", 10)
+	local root = character:WaitForChild("HumanoidRootPart", 10)
+	if not hum or not hum:IsA("Humanoid") or not root or not root:IsA("BasePart") then
+		warn("[All-Star] Character missing Humanoid/HumanoidRootPart")
+		return
+	end
+	if hum.RigType ~= Enum.HumanoidRigType.R15 then
+		warn("[All-Star] R15 is required for poses/armor. Set Game Settings > Avatar > R15.")
+	end
+	humanoid = hum
+	loadAnimations(hum)
+
+	local newFlight = FlightController.new(character, hum, root)
+	newFlight.onFlyingChanged = function(isFlying: boolean)
+		hud:SetFlying(isFlying)
+		setTrack("Flight", isFlying)
+	end
+	newFlight.onGroundImpact = requestLand
+	flight = newFlight
+	hud:SetFlying(newFlight:IsFlying())
+
+	blast = BlastController.new(character, root, request, cooldowns)
+
+	-- Superhero landing from big falls (not only from flight dives).
+	local peakFallSpeed = 0
+	table.insert(
+		characterConnections,
+		RunService.PreSimulation:Connect(function()
+			if hum:GetState() == Enum.HumanoidStateType.Freefall then
+				peakFallSpeed = math.max(peakFallSpeed, -root.AssemblyLinearVelocity.Y)
+			end
+		end)
+	)
+	table.insert(
+		characterConnections,
+		hum.StateChanged:Connect(function(old, new)
+			if new == Enum.HumanoidStateType.Landed and old == Enum.HumanoidStateType.Freefall then
+				local speed = peakFallSpeed
+				peakFallSpeed = 0
+				if
+					Config.Landing.AutoFromFalls
+					and speed >= Config.Landing.MinImpactSpeed
+					and cooldowns:IsReady("Landing")
+				then
+					requestLand()
+				end
+			elseif new ~= Enum.HumanoidStateType.Freefall then
+				peakFallSpeed = 0
+			end
+		end)
+	)
+	table.insert(
+		characterConnections,
+		hum.Died:Connect(function()
+			if blast then
+				blast:Cancel()
+			end
+		end)
+	)
+end
+
+--------------------------------------------------------------------------
+-- Boot
+--------------------------------------------------------------------------
+hud = HUD.new(actions :: any, cooldowns)
+EffectsController.start()
+InputController.start(actions)
+VFX.getContainer()
+
+player.CharacterAdded:Connect(onCharacterAdded)
+if player.Character then
+	task.spawn(onCharacterAdded, player.Character)
+end
+]]></ProtectedString></Properties><Item class="ModuleScript" referent="RBX00000025"><Properties><string name="Name">BlastController</string><ProtectedString name="Source"><![CDATA[--[[
+	All-Star :: BlastController (client ModuleScript)
+
+	Hold to charge, release to fire. Works identically for:
+	  * the on-screen BLAST button (touch)
+	  * E / left mouse (keyboard + mouse)
+	  * R2 (gamepad)
+
+	The client only sends WHEN charging starts and WHICH DIRECTION to fire.
+	Damage, charge level, origin, cooldown and hit detection are all decided
+	by the server (BlastService).
+
+	Aiming: on touch / gamepad the blast goes to whatever is under the screen
+	centre (crosshair); with a free mouse it goes to the mouse cursor.
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+
+local Shared = ReplicatedStorage:WaitForChild("AllStar")
+local Config = require(Shared:WaitForChild("Config"))
+local VFX = require(Shared:WaitForChild("VFX"))
+local CooldownTracker = require(Shared:WaitForChild("CooldownTracker"))
+
+local BlastController = {}
+BlastController.__index = BlastController
+
+local BLAST = Config.Blast
+local AIM_DISTANCE = 1000
+
+export type BlastController = typeof(setmetatable(
+	{} :: {
+		character: Model,
+		root: BasePart,
+		request: RemoteEvent,
+		cooldowns: CooldownTracker.CooldownTracker,
+		charging: boolean,
+		chargeStart: number,
+		chargeToken: number,
+		usingTouchAim: boolean,
+	},
+	BlastController
+))
+
+function BlastController.new(
+	character: Model,
+	root: BasePart,
+	request: RemoteEvent,
+	cooldowns: CooldownTracker.CooldownTracker
+): BlastController
+	return setmetatable({
+		character = character,
+		root = root,
+		request = request,
+		cooldowns = cooldowns,
+		charging = false,
+		chargeStart = 0,
+		chargeToken = 0,
+		usingTouchAim = false,
+	}, BlastController)
+end
+
+-- 0..1 charge for the HUD meter (client-side estimate of the server's value).
+function BlastController.GetCharge(self: BlastController): number?
+	if not self.charging then
+		return nil
+	end
+	return math.clamp((os.clock() - self.chargeStart) / BLAST.ChargeTime, 0, 1)
+end
+
+function BlastController.Begin(self: BlastController, fromTouch: boolean?)
+	if self.charging or not self.cooldowns:IsReady("Blast") then
+		return
+	end
+	self.usingTouchAim = fromTouch == true
+	self.charging = true
+	self.chargeStart = os.clock()
+	self.chargeToken += 1
+	local token = self.chargeToken
+	self.request:FireServer(Config.Actions.ChargeStart)
+
+	-- Auto-release just before the server's max hold time.
+	task.delay(BLAST.MaxHoldTime - 0.1, function()
+		if self.charging and self.chargeToken == token then
+			self:Release()
+		end
+	end)
+end
+
+function BlastController._aimDirection(self: BlastController): Vector3?
+	local camera = workspace.CurrentCamera
+	if not camera then
+		return nil
+	end
+
+	local ray: Ray
+	local mouseFree = UserInputService.MouseEnabled
+		and not self.usingTouchAim
+		and UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter
+	if mouseFree then
+		local mouse = UserInputService:GetMouseLocation()
+		ray = camera:ViewportPointToRay(mouse.X, mouse.Y)
+	else
+		local size = camera.ViewportSize
+		ray = camera:ViewportPointToRay(size.X / 2, size.Y / 2)
+	end
+
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { self.character, VFX.getContainer() }
+	local result = workspace:Raycast(ray.Origin, ray.Direction * AIM_DISTANCE, params)
+	local targetPoint = if result then result.Position else ray.Origin + ray.Direction * AIM_DISTANCE
+
+	local origin = self.root.Position + Vector3.new(0, BLAST.OriginHeight, 0)
+	local direction = targetPoint - origin
+	if direction.Magnitude < 1 then
+		direction = ray.Direction
+	end
+	return direction.Unit
+end
+
+function BlastController.Release(self: BlastController)
+	if not self.charging then
+		return
+	end
+	self.charging = false
+	local charge = math.clamp((os.clock() - self.chargeStart) / BLAST.ChargeTime, 0, 1)
+
+	local direction = self:_aimDirection()
+	if not direction or not self.root.Parent then
+		self.request:FireServer(Config.Actions.ChargeCancel)
+		return
+	end
+
+	-- Face the shot when on foot (flight orientation is handled by FlightController).
+	local flat = Vector3.new(direction.X, 0, direction.Z)
+	if flat.Magnitude > 0.1 and self.character:GetAttribute(Config.Attributes.Flying) ~= true then
+		self.root.CFrame = CFrame.lookAlong(self.root.Position, flat.Unit)
+	end
+
+	self.request:FireServer(Config.Actions.Fire, direction)
+
+	-- Client-side prediction for snappy UI; the server's Feedback overrides it.
+	local predicted = if charge >= BLAST.ExplosiveThreshold then Config.Cooldowns.ChargedBlast else Config.Cooldowns.Blast
+	self.cooldowns:Start("Blast", predicted)
+	VFX.muzzleFlash(self.root.Position + Vector3.new(0, BLAST.OriginHeight, 0) + direction * 2, charge)
+end
+
+function BlastController.Cancel(self: BlastController)
+	if self.charging then
+		self.charging = false
+		self.request:FireServer(Config.Actions.ChargeCancel)
+	end
+end
+
+function BlastController.Destroy(self: BlastController)
+	self.charging = false
+	self.chargeToken += 1
+end
+
+return BlastController
+]]></ProtectedString></Properties></Item>
+<Item class="ModuleScript" referent="RBX00000026"><Properties><string name="Name">EffectsController</string><ProtectedString name="Source"><![CDATA[--[[
+	All-Star :: EffectsController (client ModuleScript)
+
+	Renders every All-Star effect for EVERY character this client can see:
+
+	  * attribute AllStarFlying  -> flight trails + flight pose
+	  * attribute AllStarCharging -> charge orb on the right hand + charge pose
+	  * Vfx "BlastFired"          -> moving projectile (synced to server time)
+	  * Vfx "BlastEnd"            -> impact sparks / explosion
+	  * Vfx "Landing"             -> shockwave, cracks, dust + landing pose
+
+	Purely cosmetic. Nothing here affects gameplay, so it is safe for the
+	client to own it.
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Shared = ReplicatedStorage:WaitForChild("AllStar")
+local Config = require(Shared:WaitForChild("Config"))
+local Remotes = require(Shared:WaitForChild("Remotes"))
+local VFX = require(Shared:WaitForChild("VFX"))
+local Poses = require(Shared:WaitForChild("Poses"))
+local Validation = require(Shared:WaitForChild("Validation"))
+
+local EffectsController = {}
+
+local ATTR = Config.Attributes
+local MAX_VISUAL_PROJECTILES = 120
+
+type VisualProjectile = {
+	visual: VFX.Projectile,
+	origin: Vector3,
+	direction: Vector3,
+	speed: number,
+	maxRange: number,
+	startTime: number,
+}
+
+local projectiles: { [number]: VisualProjectile } = {}
+local projectileCount = 0
+
+-- Optional hook so the local client can react to its own landing (move lock).
+EffectsController.onLocalLanding = nil :: ((intensity: number) -> ())?
+
+--------------------------------------------------------------------------
+-- Per-character attribute watchers
+--------------------------------------------------------------------------
+local function watchCharacter(character: Model)
+	local cleanupTrails: (() -> ())? = nil
+	local orb: VFX.ChargeOrb? = nil
+	local orbStart = 0
+	local orbConnection: RBXScriptConnection? = nil
+
+	local function updateFlying()
+		local flying = character:GetAttribute(ATTR.Flying) == true
+		Poses.setHeld(character, "Flight", flying, 0.25)
+		if flying and not cleanupTrails then
+			cleanupTrails = VFX.attachFlightTrails(character)
+		elseif not flying and cleanupTrails then
+			cleanupTrails()
+			cleanupTrails = nil
+		end
+	end
+
+	local function stopOrb()
+		if orbConnection then
+			orbConnection:Disconnect()
+			orbConnection = nil
+		end
+		if orb then
+			orb.destroy()
+			orb = nil
+		end
+	end
+
+	local function updateCharging()
+		local charging = character:GetAttribute(ATTR.Charging) == true
+		Poses.setHeld(character, "Charge", charging, 0.12)
+		if charging and not orb then
+			local hand = character:FindFirstChild("RightHand")
+			if hand and hand:IsA("BasePart") then
+				orb = VFX.createChargeOrb(hand)
+				orbStart = os.clock()
+				orbConnection = RunService.PreRender:Connect(function()
+					if orb then
+						orb.update(math.clamp((os.clock() - orbStart) / Config.Blast.ChargeTime, 0, 1))
+					end
+				end)
+			end
+		elseif not charging then
+			stopOrb()
+		end
+	end
+
+	local connections = {
+		character:GetAttributeChangedSignal(ATTR.Flying):Connect(updateFlying),
+		character:GetAttributeChangedSignal(ATTR.Charging):Connect(updateCharging),
+	}
+	updateFlying()
+	updateCharging()
+
+	local cleaned = false
+	local function cleanup()
+		if cleaned then
+			return
+		end
+		cleaned = true
+		for _, connection in connections do
+			connection:Disconnect()
+		end
+		stopOrb()
+		if cleanupTrails then
+			cleanupTrails()
+			cleanupTrails = nil
+		end
+		Poses.forget(character)
+	end
+	-- Old characters may be destroyed OR just un-parented depending on
+	-- workspace settings, so handle both.
+	character.Destroying:Connect(cleanup)
+	table.insert(
+		connections,
+		character.AncestryChanged:Connect(function()
+			if not character:IsDescendantOf(game) then
+				cleanup()
+			end
+		end)
+	)
+end
+
+local function watchPlayer(player: Player)
+	if player.Character then
+		task.spawn(watchCharacter, player.Character)
+	end
+	player.CharacterAdded:Connect(watchCharacter)
+end
+
+--------------------------------------------------------------------------
+-- Vfx remote handlers (server data is trusted but still type-checked)
+--------------------------------------------------------------------------
+local function onBlastFired(data: any)
+	if projectileCount >= MAX_VISUAL_PROJECTILES then
+		return
+	end
+	if
+		typeof(data.id) ~= "number"
+		or not Validation.isFiniteVector3(data.origin)
+		or not Validation.isFiniteVector3(data.direction)
+		or typeof(data.speed) ~= "number"
+		or typeof(data.startTime) ~= "number"
+	then
+		return
+	end
+	local visual = VFX.createProjectile(data.radius or 1, data.charge or 0)
+	projectiles[data.id] = {
+		visual = visual,
+		origin = data.origin,
+		direction = data.direction,
+		speed = data.speed,
+		maxRange = data.maxRange or Config.Blast.MaxRange,
+		startTime = data.startTime,
+	}
+	projectileCount += 1
+	visual.setCFrame(CFrame.lookAlong(data.origin, data.direction))
+end
+
+local function removeProjectile(id: number)
+	local projectile = projectiles[id]
+	if projectile then
+		projectile.visual.destroy()
+		projectiles[id] = nil
+		projectileCount -= 1
+	end
+end
+
+local function onBlastEnd(data: any)
+	if typeof(data.id) ~= "number" then
+		return
+	end
+	removeProjectile(data.id)
+	if data.impact and Validation.isFiniteVector3(data.position) then
+		local normal = if Validation.isFiniteVector3(data.normal) then data.normal else Vector3.yAxis
+		VFX.impact(data.position, normal, data.charge or 0, data.explosive == true, data.radius or 0)
+	end
+end
+
+local function onLanding(data: any)
+	if not Validation.isFiniteVector3(data.position) then
+		return
+	end
+	local intensity = if typeof(data.intensity) == "number" then math.clamp(data.intensity, 0, 1) else 0
+	local normal = if Validation.isFiniteVector3(data.normal) then data.normal else Vector3.yAxis
+	VFX.landing(data.position, normal, intensity)
+
+	local owner = if typeof(data.ownerId) == "number" then Players:GetPlayerByUserId(data.ownerId) else nil
+	local character = owner and owner.Character
+	if character then
+		Poses.play(character, "Landing", Config.Landing.PoseTime)
+	end
+	if owner == Players.LocalPlayer and EffectsController.onLocalLanding then
+		EffectsController.onLocalLanding(intensity)
+	end
+end
+
+local function stepProjectiles()
+	local now = workspace:GetServerTimeNow()
+	for id, projectile in projectiles do
+		local traveled = math.clamp((now - projectile.startTime) * projectile.speed, 0, projectile.maxRange)
+		local position = projectile.origin + projectile.direction * traveled
+		projectile.visual.setCFrame(CFrame.lookAlong(position, projectile.direction))
+		-- Safety net if a BlastEnd packet never arrives.
+		if now - projectile.startTime > projectile.maxRange / projectile.speed + 1 then
+			removeProjectile(id)
+		end
+	end
+end
+
+function EffectsController.start()
+	for _, player in Players:GetPlayers() do
+		watchPlayer(player)
+	end
+	Players.PlayerAdded:Connect(watchPlayer)
+
+	Remotes.get("Vfx").OnClientEvent:Connect(function(kind: any, data: any)
+		if typeof(kind) ~= "string" or typeof(data) ~= "table" then
+			return
+		end
+		if kind == "BlastFired" then
+			onBlastFired(data)
+		elseif kind == "BlastEnd" then
+			onBlastEnd(data)
+		elseif kind == "Landing" then
+			onLanding(data)
+		end
+	end)
+
+	RunService.PreRender:Connect(stepProjectiles)
+end
+
+return EffectsController
+]]></ProtectedString></Properties></Item>
+<Item class="ModuleScript" referent="RBX00000027"><Properties><string name="Name">FlightController</string><ProtectedString name="Source"><![CDATA[--[[
+	All-Star :: FlightController (client ModuleScript)
+
+	Drives flight physics for the LOCAL character while the server says it is
+	flying (character attribute AllStarFlying, written only by the server).
+
+	Directional control comes from the standard PlayerModule ControlModule, so
+	it works the same with the mobile thumbstick, keyboard WASD and gamepad.
+	Movement is camera-relative and 3D: look up and push forward to climb.
+	Up/Down buttons (or Space / Ctrl) add pure vertical movement.
+
+	Physics: LinearVelocity (velocity) + AlignOrientation (body facing/tilt).
+	The total speed is clamped to Config.Flight.Speed so legit play never trips
+	the server's speed monitor.
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Shared = ReplicatedStorage:WaitForChild("AllStar")
+local Config = require(Shared:WaitForChild("Config"))
+
+local FlightController = {}
+FlightController.__index = FlightController
+
+local FLIGHT = Config.Flight
+local MAX_FORCE = 1e7
+local GROUND_PROBE = 3.6 -- studs below the root that count as "touching ground" while diving
+
+local player = Players.LocalPlayer
+
+local controls: any = nil
+local function getControls(): any
+	if controls then
+		return controls
+	end
+	local ok, result = pcall(function()
+		local playerModule = require(player:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule") :: ModuleScript)
+		return (playerModule :: any):GetControls()
+	end)
+	if ok then
+		controls = result
+	else
+		warn("[All-Star] PlayerModule controls unavailable; flight uses Humanoid.MoveDirection:", result)
+	end
+	return controls
+end
+
+export type FlightController = typeof(setmetatable(
+	{} :: {
+		character: Model,
+		humanoid: Humanoid,
+		root: BasePart,
+		flying: boolean,
+		diving: boolean,
+		vertical: { [string]: number }, -- input source -> -1..1
+		velocity: Vector3,
+		attachment: Attachment?,
+		linear: LinearVelocity?,
+		align: AlignOrientation?,
+		stepConnection: RBXScriptConnection?,
+		connections: { RBXScriptConnection },
+		onGroundImpact: (() -> ())?,
+		onFlyingChanged: ((boolean) -> ())?,
+	},
+	FlightController
+))
+
+function FlightController.new(character: Model, humanoid: Humanoid, root: BasePart): FlightController
+	local self = setmetatable({
+		character = character,
+		humanoid = humanoid,
+		root = root,
+		flying = false,
+		diving = false,
+		vertical = {},
+		velocity = Vector3.zero,
+		attachment = nil,
+		linear = nil,
+		align = nil,
+		stepConnection = nil,
+		connections = {},
+		onGroundImpact = nil,
+		onFlyingChanged = nil,
+	}, FlightController)
+
+	table.insert(
+		self.connections,
+		character:GetAttributeChangedSignal(Config.Attributes.Flying):Connect(function()
+			self:_sync()
+		end)
+	)
+	self:_sync()
+	return self
+end
+
+function FlightController.IsFlying(self: FlightController): boolean
+	return self.flying
+end
+
+-- Vertical input from any source ("keyboard", "touch", ...), summed and clamped.
+function FlightController.SetVertical(self: FlightController, source: string, value: number)
+	self.vertical[source] = if value ~= 0 then value else nil
+end
+
+function FlightController.StartDive(self: FlightController)
+	if self.flying then
+		self.diving = true
+	end
+end
+
+function FlightController._sync(self: FlightController)
+	local shouldFly = self.character:GetAttribute(Config.Attributes.Flying) == true
+	if shouldFly and not self.flying then
+		self:_enable()
+	elseif not shouldFly and self.flying then
+		self:_disable()
+	end
+end
+
+function FlightController._enable(self: FlightController)
+	self.flying = true
+	self.diving = false
+	local root = self.root
+
+	local attachment = Instance.new("Attachment")
+	attachment.Name = "AllStarFlightAttachment"
+	attachment.Parent = root
+
+	local linear = Instance.new("LinearVelocity")
+	linear.Name = "AllStarFlightVelocity"
+	linear.Attachment0 = attachment
+	linear.RelativeTo = Enum.ActuatorRelativeTo.World
+	linear.VelocityConstraintMode = Enum.VelocityConstraintMode.Vector
+	linear.MaxForce = MAX_FORCE
+	linear.Parent = root
+
+	local align = Instance.new("AlignOrientation")
+	align.Name = "AllStarFlightOrientation"
+	align.Mode = Enum.OrientationAlignmentMode.OneAttachment
+	align.Attachment0 = attachment
+	align.MaxTorque = MAX_FORCE
+	align.Responsiveness = FLIGHT.Responsiveness
+	align.RigidityEnabled = false
+	local startLook = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
+	align.CFrame = CFrame.lookAlong(Vector3.zero, if startLook.Magnitude > 0.01 then startLook.Unit else -Vector3.zAxis)
+	align.Parent = root
+
+	self.attachment, self.linear, self.align = attachment, linear, align
+
+	-- Start from current momentum plus a small takeoff pop.
+	self.velocity = root.AssemblyLinearVelocity + Vector3.new(0, FLIGHT.TakeoffBoost, 0)
+	if self.velocity.Magnitude > FLIGHT.Speed then
+		self.velocity = self.velocity.Unit * FLIGHT.Speed
+	end
+	self.humanoid.PlatformStand = true
+
+	self.stepConnection = RunService.PreSimulation:Connect(function(dt)
+		self:_step(dt)
+	end)
+	if self.onFlyingChanged then
+		self.onFlyingChanged(true)
+	end
+end
+
+function FlightController._disable(self: FlightController)
+	self.flying = false
+	self.diving = false
+	if self.stepConnection then
+		self.stepConnection:Disconnect()
+		self.stepConnection = nil
+	end
+	for _, instance in { self.linear, self.align, self.attachment } do
+		if instance then
+			instance:Destroy()
+		end
+	end
+	self.linear, self.align, self.attachment = nil, nil, nil
+	if self.humanoid.Parent then
+		self.humanoid.PlatformStand = false
+		self.humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+	end
+	if self.onFlyingChanged then
+		self.onFlyingChanged(false)
+	end
+end
+
+function FlightController._moveInput(self: FlightController): Vector3
+	local c = getControls()
+	if c then
+		local ok, move = pcall(c.GetMoveVector, c)
+		if ok and typeof(move) == "Vector3" then
+			return move
+		end
+	end
+	-- Fallback: world-space MoveDirection converted to camera space.
+	local camera = workspace.CurrentCamera
+	local world = self.humanoid.MoveDirection
+	if not camera or world.Magnitude < 0.01 then
+		return Vector3.zero
+	end
+	local local_ = camera.CFrame:VectorToObjectSpace(world)
+	return Vector3.new(local_.X, 0, local_.Z)
+end
+
+function FlightController._groundBelow(self: FlightController): RaycastResult?
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { self.character }
+	local reach = self.humanoid.HipHeight + self.root.Size.Y / 2 + GROUND_PROBE
+	return workspace:Raycast(self.root.Position, Vector3.new(0, -reach, 0), params)
+end
+
+function FlightController._step(self: FlightController, dt: number)
+	local camera = workspace.CurrentCamera
+	local linear, align = self.linear, self.align
+	if not camera or not linear or not align or not self.root.Parent then
+		return
+	end
+
+	local move = self:_moveInput()
+	local camCF = camera.CFrame
+	local direction = camCF.RightVector * move.X + camCF.LookVector * -move.Z
+	if direction.Magnitude > 1 then
+		direction = direction.Unit
+	end
+
+	local verticalInput = 0
+	for _, value in self.vertical do
+		verticalInput += value
+	end
+	verticalInput = math.clamp(verticalInput, -1, 1)
+
+	local target: Vector3
+	if self.diving then
+		local flat = Vector3.new(direction.X, 0, direction.Z) * FLIGHT.Speed * 0.3
+		target = flat + Vector3.new(0, -FLIGHT.DiveSpeed, 0)
+	else
+		target = direction * FLIGHT.Speed + Vector3.new(0, verticalInput * FLIGHT.VerticalSpeed, 0)
+		if target.Magnitude > FLIGHT.Speed then
+			target = target.Unit * FLIGHT.Speed
+		end
+	end
+
+	local alpha = 1 - math.exp(-FLIGHT.Acceleration * dt)
+	self.velocity = self.velocity:Lerp(target, alpha)
+	linear.VectorVelocity = self.velocity
+
+	-- Facing: travel direction when moving, camera heading when hovering.
+	local flatVelocity = Vector3.new(self.velocity.X, 0, self.velocity.Z)
+	local facing: Vector3
+	local pitch = 0
+	if flatVelocity.Magnitude > 4 and not self.diving then
+		facing = flatVelocity.Unit
+		pitch = -math.rad(FLIGHT.TiltDegrees) * math.clamp(flatVelocity.Magnitude / FLIGHT.Speed, 0, 1)
+	else
+		local look = Vector3.new(camCF.LookVector.X, 0, camCF.LookVector.Z)
+		local rootLook = Vector3.new(self.root.CFrame.LookVector.X, 0, self.root.CFrame.LookVector.Z)
+		if look.Magnitude > 0.01 then
+			facing = look.Unit
+		elseif rootLook.Magnitude > 0.01 then
+			facing = rootLook.Unit
+		else
+			facing = -Vector3.zAxis -- looking straight down: avoid a NaN orientation
+		end
+	end
+	align.CFrame = CFrame.lookAlong(Vector3.zero, facing) * CFrame.Angles(pitch, 0, 0)
+
+	-- Dive impact detection: report once, the server decides what happens.
+	if self.diving and self:_groundBelow() then
+		self.diving = false
+		if self.onGroundImpact then
+			self.onGroundImpact()
+		end
+	end
+end
+
+function FlightController.Destroy(self: FlightController)
+	if self.flying then
+		self:_disable()
+	end
+	for _, connection in self.connections do
+		connection:Disconnect()
+	end
+	table.clear(self.connections)
+end
+
+return FlightController
+]]></ProtectedString></Properties></Item>
+<Item class="ModuleScript" referent="RBX00000028"><Properties><string name="Name">HUD</string><ProtectedString name="Source"><![CDATA[--[[
+	All-Star :: HUD (client ModuleScript)
+
+	Builds the whole UI in code (no .rbxm needed), see docs/UI_DESIGN.md.
+
+	Touch devices: a thumb cluster on the right, placed ABOVE Roblox's own
+	jump button so they never overlap.
+	    BLAST (hold to charge, release to fire)   FLY / STOP   LAND
+	    UP / DOWN appear only while flying.
+	    A crosshair marks where blasts go (screen centre).
+
+	Keyboard / gamepad: a compact ability bar at the bottom centre with key
+	hints. Buttons there are clickable too.
+
+	Every ability button shows its cooldown as a dark overlay + countdown.
+	A charge meter appears while charging, with a tick at the explosive threshold.
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+
+local Shared = ReplicatedStorage:WaitForChild("AllStar")
+local Config = require(Shared:WaitForChild("Config"))
+local CooldownTracker = require(Shared:WaitForChild("CooldownTracker"))
+
+local HUD = {}
+HUD.__index = HUD
+
+local COLORS = Config.Colors
+local FONT_HEAVY = Font.fromName("GothamSSm", Enum.FontWeight.Heavy)
+local FONT_BOLD = Font.fromName("GothamSSm", Enum.FontWeight.Bold)
+
+export type Callbacks = {
+	toggleFlight: () -> (),
+	beginBlast: (fromTouch: boolean) -> (),
+	releaseBlast: () -> (),
+	land: () -> (),
+	setVertical: (source: string, value: number) -> (),
+	getCharge: () -> number?,
+	isFlying: () -> boolean,
+}
+
+type AbilityButton = {
+	button: TextButton,
+	overlay: Frame,
+	countdown: TextLabel,
+	stroke: UIStroke,
+	cooldownKey: string?,
+}
+
+export type HUD = typeof(setmetatable(
+	{} :: {
+		gui: ScreenGui,
+		buttons: { [string]: AbilityButton },
+		chargeFrame: Frame,
+		chargeFill: Frame,
+		chargeLabel: TextLabel,
+		crosshair: Frame,
+		crosshairGui: ScreenGui,
+		flightHint: TextLabel?,
+		cooldowns: CooldownTracker.CooldownTracker,
+		callbacks: Callbacks,
+		isTouch: boolean,
+		connections: { RBXScriptConnection },
+	},
+	HUD
+))
+
+--------------------------------------------------------------------------
+-- Small builders
+--------------------------------------------------------------------------
+local function corner(parent: Instance, radius: UDim?)
+	local c = Instance.new("UICorner")
+	c.CornerRadius = radius or UDim.new(0.5, 0)
+	c.Parent = parent
+end
+
+local function makeAbilityButton(
+	parent: Instance,
+	name: string,
+	label: string,
+	hint: string?,
+	size: number,
+	cooldownKey: string?
+): AbilityButton
+	local button = Instance.new("TextButton")
+	button.Name = name
+	button.Size = UDim2.fromOffset(size, size)
+	button.AnchorPoint = Vector2.new(0.5, 0.5)
+	button.BackgroundColor3 = COLORS.UiBackground
+	button.BackgroundTransparency = 0.25
+	button.AutoButtonColor = false
+	button.Text = ""
+	button.Active = true
+	button.Parent = parent
+	corner(button)
+
+	local stroke = Instance.new("UIStroke")
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Color = COLORS.EnergyCyan
+	stroke.Thickness = 2
+	stroke.Parent = button
+
+	local text = Instance.new("TextLabel")
+	text.Name = "Label"
+	text.BackgroundTransparency = 1
+	text.Size = UDim2.fromScale(1, 1)
+	text.FontFace = FONT_HEAVY
+	text.Text = label
+	text.TextColor3 = COLORS.EnergyWhite
+	text.TextScaled = true
+	text.Parent = button
+	local pad = Instance.new("UIPadding")
+	pad.PaddingLeft = UDim.new(0.18, 0)
+	pad.PaddingRight = UDim.new(0.18, 0)
+	pad.PaddingTop = UDim.new(0.3, 0)
+	pad.PaddingBottom = UDim.new(0.3, 0)
+	pad.Parent = text
+
+	if hint then
+		local hintLabel = Instance.new("TextLabel")
+		hintLabel.Name = "Hint"
+		hintLabel.BackgroundTransparency = 1
+		hintLabel.AnchorPoint = Vector2.new(0.5, 0)
+		hintLabel.Position = UDim2.new(0.5, 0, 1, 4)
+		hintLabel.Size = UDim2.new(1.6, 0, 0, 14)
+		hintLabel.FontFace = FONT_BOLD
+		hintLabel.Text = hint
+		hintLabel.TextSize = 12
+		hintLabel.TextColor3 = COLORS.ArmorSilver
+		hintLabel.Parent = button
+	end
+
+	local overlay = Instance.new("Frame")
+	overlay.Name = "Cooldown"
+	overlay.Size = UDim2.fromScale(1, 1)
+	overlay.BackgroundColor3 = Color3.new(0, 0, 0)
+	overlay.BackgroundTransparency = 0.35
+	overlay.Visible = false
+	overlay.ZIndex = 3
+	overlay.Parent = button
+	corner(overlay)
+
+	local countdown = Instance.new("TextLabel")
+	countdown.Name = "Countdown"
+	countdown.BackgroundTransparency = 1
+	countdown.Size = UDim2.fromScale(1, 1)
+	countdown.FontFace = FONT_HEAVY
+	countdown.TextColor3 = COLORS.EnergyWhite
+	countdown.TextSize = math.floor(size * 0.3)
+	countdown.ZIndex = 4
+	countdown.Parent = overlay
+
+	return {
+		button = button,
+		overlay = overlay,
+		countdown = countdown,
+		stroke = stroke,
+		cooldownKey = cooldownKey,
+	}
+end
+
+-- Press-and-hold that survives the finger sliding off the button.
+local function bindHold(button: GuiButton, onDown: (fromTouch: boolean) -> (), onUp: () -> ()): RBXScriptConnection
+	return button.InputBegan:Connect(function(input: InputObject)
+		local isTouch = input.UserInputType == Enum.UserInputType.Touch
+		if not isTouch and input.UserInputType ~= Enum.UserInputType.MouseButton1 then
+			return
+		end
+		if input.UserInputState ~= Enum.UserInputState.Begin then
+			return
+		end
+		onDown(isTouch)
+		local changed: RBXScriptConnection
+		changed = input:GetPropertyChangedSignal("UserInputState"):Connect(function()
+			if input.UserInputState == Enum.UserInputState.End or input.UserInputState == Enum.UserInputState.Cancel then
+				changed:Disconnect()
+				onUp()
+			end
+		end)
+	end)
+end
+
+local function bindTap(button: GuiButton, onTap: () -> ()): RBXScriptConnection
+	return button.Activated:Connect(function()
+		onTap()
+	end)
+end
+
+--------------------------------------------------------------------------
+-- Construction
+--------------------------------------------------------------------------
+function HUD.new(callbacks: Callbacks, cooldowns: CooldownTracker.CooldownTracker): HUD
+	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
+	for _, oldName in { "AllStarHUD", "AllStarCrosshair" } do
+		local existing = playerGui:FindFirstChild(oldName)
+		if existing then
+			existing:Destroy()
+		end
+	end
+
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "AllStarHUD"
+	gui.ResetOnSpawn = false
+	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	gui.ScreenInsets = Enum.ScreenInsets.CoreUISafeInsets
+	gui.Parent = playerGui
+
+	local isTouch = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+
+	local self = setmetatable({
+		gui = gui,
+		buttons = {},
+		cooldowns = cooldowns,
+		callbacks = callbacks,
+		isTouch = isTouch,
+		connections = {},
+	}, HUD) :: any
+
+	-- Title badge (top centre, clear of Roblox's top-left menu buttons).
+	local title = Instance.new("TextLabel")
+	title.Name = "Title"
+	title.AnchorPoint = Vector2.new(0.5, 0)
+	title.Position = UDim2.new(0.5, 0, 0, 6)
+	title.Size = UDim2.fromOffset(160, 22)
+	title.BackgroundColor3 = COLORS.UiBackground
+	title.BackgroundTransparency = 0.35
+	title.FontFace = FONT_HEAVY
+	title.Text = "✦ ALL-STAR ✦"
+	title.TextSize = 14
+	title.TextColor3 = COLORS.EnergyWhite
+	title.Parent = gui
+	corner(title, UDim.new(0, 6))
+
+	-- Ability buttons.
+	if isTouch then
+		local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(844, 390)
+		local smallScreen = math.min(viewport.X, viewport.Y) <= 500
+		-- Keep clear of Roblox's jump button (bottom-right corner).
+		local baseY = if smallScreen then -150 else -260
+		local cluster = Instance.new("Frame")
+		cluster.Name = "TouchCluster"
+		cluster.BackgroundTransparency = 1
+		cluster.AnchorPoint = Vector2.new(1, 1)
+		cluster.Position = UDim2.new(1, -12, 1, baseY + 150)
+		cluster.Size = UDim2.fromOffset(260, 240)
+		cluster.Parent = gui
+		-- Positions are relative to the cluster's top-left (260 x 240 box).
+		local blast = makeAbilityButton(cluster, "Blast", "BLAST", nil, 96, "Blast")
+		blast.button.Position = UDim2.fromOffset(200, 150)
+		local fly = makeAbilityButton(cluster, "Fly", "FLY", nil, 66, "FlightToggle")
+		fly.button.Position = UDim2.fromOffset(100, 180)
+		local land = makeAbilityButton(cluster, "Land", "LAND", nil, 58, "Landing")
+		land.button.Position = UDim2.fromOffset(212, 52)
+		local up = makeAbilityButton(cluster, "Up", "▲", nil, 56, nil)
+		up.button.Position = UDim2.fromOffset(36, 110)
+		local down = makeAbilityButton(cluster, "Down", "▼", nil, 56, nil)
+		down.button.Position = UDim2.fromOffset(36, 180)
+		self.buttons = { Blast = blast, Fly = fly, Land = land, Up = up, Down = down }
+	else
+		local bar = Instance.new("Frame")
+		bar.Name = "AbilityBar"
+		bar.BackgroundTransparency = 1
+		bar.AnchorPoint = Vector2.new(0.5, 1)
+		bar.Position = UDim2.new(0.5, 0, 1, -34)
+		bar.Size = UDim2.fromOffset(240, 70)
+		bar.Parent = gui
+		local fly = makeAbilityButton(bar, "Fly", "FLY", "[F]", 62, "FlightToggle")
+		fly.button.Position = UDim2.fromOffset(40, 35)
+		local blast = makeAbilityButton(bar, "Blast", "BLAST", "[E] / hold LMB", 70, "Blast")
+		blast.button.Position = UDim2.fromOffset(120, 35)
+		local land = makeAbilityButton(bar, "Land", "LAND", "[G]", 62, "Landing")
+		land.button.Position = UDim2.fromOffset(200, 35)
+		self.buttons = { Blast = blast, Fly = fly, Land = land }
+
+		local hint = Instance.new("TextLabel")
+		hint.Name = "FlightHint"
+		hint.BackgroundTransparency = 1
+		hint.AnchorPoint = Vector2.new(0.5, 1)
+		hint.Position = UDim2.new(0.5, 0, 0, -8)
+		hint.Size = UDim2.fromOffset(320, 16)
+		hint.FontFace = FONT_BOLD
+		hint.TextSize = 13
+		hint.TextColor3 = COLORS.ArmorSilver
+		hint.Text = "WASD + camera to steer · Space up · Ctrl down · G dive-land"
+		hint.Visible = false
+		hint.Parent = bar
+		self.flightHint = hint
+	end
+
+	-- Wire buttons.
+	local b = self.buttons
+	table.insert(self.connections, bindTap(b.Fly.button, callbacks.toggleFlight))
+	table.insert(self.connections, bindTap(b.Land.button, callbacks.land))
+	table.insert(self.connections, bindHold(b.Blast.button, callbacks.beginBlast, callbacks.releaseBlast))
+	if b.Up then
+		table.insert(
+			self.connections,
+			bindHold(b.Up.button, function()
+				callbacks.setVertical("touchUp", 1)
+			end, function()
+				callbacks.setVertical("touchUp", 0)
+			end)
+		)
+		table.insert(
+			self.connections,
+			bindHold(b.Down.button, function()
+				callbacks.setVertical("touchDown", -1)
+			end, function()
+				callbacks.setVertical("touchDown", 0)
+			end)
+		)
+	end
+
+	-- Charge meter.
+	local chargeFrame = Instance.new("Frame")
+	chargeFrame.Name = "ChargeMeter"
+	chargeFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+	chargeFrame.Position = UDim2.new(0.5, 0, 0.5, 46)
+	chargeFrame.Size = UDim2.fromOffset(180, 10)
+	chargeFrame.BackgroundColor3 = COLORS.UiBackground
+	chargeFrame.BackgroundTransparency = 0.3
+	chargeFrame.Visible = false
+	chargeFrame.Parent = gui
+	corner(chargeFrame, UDim.new(0, 5))
+
+	local fill = Instance.new("Frame")
+	fill.Name = "Fill"
+	fill.Size = UDim2.fromScale(0, 1)
+	fill.BackgroundColor3 = Color3.new(1, 1, 1)
+	fill.Parent = chargeFrame
+	corner(fill, UDim.new(0, 5))
+	local gradient = Instance.new("UIGradient")
+	gradient.Color = ColorSequence.new(COLORS.EnergyWhite, COLORS.EnergyCyan)
+	gradient.Parent = fill
+
+	local tick = Instance.new("Frame")
+	tick.Name = "ExplosiveTick"
+	tick.AnchorPoint = Vector2.new(0.5, 0.5)
+	tick.Position = UDim2.fromScale(Config.Blast.ExplosiveThreshold, 0.5)
+	tick.Size = UDim2.new(0, 2, 1.8, 0)
+	tick.BackgroundColor3 = COLORS.EnergyWhite
+	tick.BorderSizePixel = 0
+	tick.ZIndex = 2
+	tick.Parent = chargeFrame
+
+	local chargeLabel = Instance.new("TextLabel")
+	chargeLabel.Name = "Label"
+	chargeLabel.BackgroundTransparency = 1
+	chargeLabel.AnchorPoint = Vector2.new(0.5, 0)
+	chargeLabel.Position = UDim2.new(0.5, 0, 1, 3)
+	chargeLabel.Size = UDim2.new(1, 0, 0, 14)
+	chargeLabel.FontFace = FONT_BOLD
+	chargeLabel.TextSize = 12
+	chargeLabel.TextColor3 = COLORS.EnergyWhite
+	chargeLabel.Text = "CHARGING"
+	chargeLabel.Parent = chargeFrame
+
+	self.chargeFrame, self.chargeFill, self.chargeLabel = chargeFrame, fill, chargeLabel
+
+	-- Crosshair at the exact viewport centre used for aiming. It lives in its
+	-- own full-screen ScreenGui (no insets) so the centre matches the camera's.
+	local crosshairGui = Instance.new("ScreenGui")
+	crosshairGui.Name = "AllStarCrosshair"
+	crosshairGui.ResetOnSpawn = false
+	crosshairGui.IgnoreGuiInset = true
+	crosshairGui.ScreenInsets = Enum.ScreenInsets.None
+	crosshairGui.Parent = playerGui
+	local crosshair = Instance.new("Frame")
+	crosshair.Name = "Crosshair"
+	crosshair.BackgroundTransparency = 1
+	crosshair.AnchorPoint = Vector2.new(0.5, 0.5)
+	crosshair.Position = UDim2.fromScale(0.5, 0.5)
+	crosshair.Size = UDim2.fromOffset(22, 22)
+	crosshair.Parent = crosshairGui
+	for _, size in { UDim2.fromOffset(2, 22), UDim2.fromOffset(22, 2) } do
+		local line = Instance.new("Frame")
+		line.AnchorPoint = Vector2.new(0.5, 0.5)
+		line.Position = UDim2.fromScale(0.5, 0.5)
+		line.Size = size
+		line.BackgroundColor3 = COLORS.EnergyWhite
+		line.BackgroundTransparency = 0.2
+		line.BorderSizePixel = 0
+		line.Parent = crosshair
+	end
+	self.crosshair = crosshair
+	self.crosshairGui = crosshairGui
+
+	setmetatable(self, HUD)
+	self:SetFlying(false)
+	table.insert(
+		self.connections,
+		RunService.PreRender:Connect(function()
+			self:_update()
+		end)
+	)
+	return self
+end
+
+--------------------------------------------------------------------------
+-- Updates
+--------------------------------------------------------------------------
+function HUD.SetFlying(self: HUD, flying: boolean)
+	local b = self.buttons
+	local label = b.Fly.button:FindFirstChild("Label") :: TextLabel?
+	if label then
+		label.Text = if flying then "STOP" else "FLY"
+	end
+	local landLabel = b.Land.button:FindFirstChild("Label") :: TextLabel?
+	if landLabel then
+		landLabel.Text = if flying then "DIVE" else "LAND"
+	end
+	if b.Up then
+		b.Up.button.Visible = flying
+		b.Down.button.Visible = flying
+	end
+	if self.flightHint then
+		self.flightHint.Visible = flying
+	end
+end
+
+function HUD.FlashDenied(self: HUD, cooldownKey: string)
+	for _, entry in self.buttons do
+		if entry.cooldownKey == cooldownKey then
+			entry.stroke.Color = Color3.fromRGB(255, 80, 80)
+			TweenService:Create(entry.stroke, TweenInfo.new(0.4), { Color = COLORS.EnergyCyan }):Play()
+		end
+	end
+end
+
+function HUD._update(self: HUD)
+	-- Cooldown overlays.
+	for _, entry in self.buttons do
+		local key = entry.cooldownKey
+		if key then
+			local remaining = self.cooldowns:Get(key)
+			if remaining > 0 then
+				entry.overlay.Visible = true
+				entry.countdown.Text = if remaining >= 1
+					then string.format("%d", math.ceil(remaining))
+					else string.format("%.1f", remaining)
+			else
+				entry.overlay.Visible = false
+			end
+		end
+	end
+
+	-- Charge meter.
+	local charge = self.callbacks.getCharge()
+	if charge then
+		self.chargeFrame.Visible = true
+		self.chargeFill.Size = UDim2.fromScale(charge, 1)
+		local explosive = charge >= Config.Blast.ExplosiveThreshold
+		self.chargeLabel.Text = if explosive then "EXPLOSIVE" else "CHARGING"
+		self.chargeLabel.TextColor3 = if explosive then COLORS.EnergyCyan else COLORS.EnergyWhite
+	else
+		self.chargeFrame.Visible = false
+	end
+
+	-- Crosshair: shown when blasts aim at screen centre.
+	local centreAim = self.isTouch
+		or UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter
+		or (UserInputService.GamepadEnabled and not UserInputService.MouseEnabled)
+	self.crosshair.Visible = centreAim
+end
+
+function HUD.Destroy(self: HUD)
+	for _, connection in self.connections do
+		connection:Disconnect()
+	end
+	self.gui:Destroy()
+	self.crosshairGui:Destroy()
+end
+
+return HUD
+]]></ProtectedString></Properties></Item>
+<Item class="ModuleScript" referent="RBX00000029"><Properties><string name="Name">InputController</string><ProtectedString name="Source"><![CDATA[--[[
+	All-Star :: InputController (client ModuleScript)
+
+	Maps keyboard, mouse and gamepad to the same action callbacks the touch
+	HUD uses (see Config.Keybinds). Touch input is handled by HUD buttons.
+	Ignores input the game already processed (typing in chat, clicking UI).
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+
+local Shared = ReplicatedStorage:WaitForChild("AllStar")
+local Config = require(Shared:WaitForChild("Config"))
+
+local InputController = {}
+
+local KEYS = Config.Keybinds
+
+local function matches(list: { Enum.KeyCode }, keyCode: Enum.KeyCode): boolean
+	return table.find(list, keyCode) ~= nil
+end
+
+export type Actions = {
+	toggleFlight: () -> (),
+	beginBlast: (fromTouch: boolean) -> (),
+	releaseBlast: () -> (),
+	land: () -> (),
+	setVertical: (source: string, value: number) -> (),
+}
+
+function InputController.start(actions: Actions): { RBXScriptConnection }
+	local connections = {}
+
+	table.insert(
+		connections,
+		UserInputService.InputBegan:Connect(function(input: InputObject, processed: boolean)
+			if processed then
+				return
+			end
+			local key = input.KeyCode
+			if input.UserInputType == Enum.UserInputType.MouseButton1 then
+				if KEYS.BlastMouse then
+					actions.beginBlast(false)
+				end
+			elseif matches(KEYS.ToggleFlight, key) then
+				actions.toggleFlight()
+			elseif matches(KEYS.Blast, key) then
+				actions.beginBlast(false)
+			elseif matches(KEYS.Land, key) then
+				actions.land()
+			elseif matches(KEYS.Up, key) then
+				actions.setVertical("keyUp", 1)
+			elseif matches(KEYS.Down, key) then
+				actions.setVertical("keyDown", -1)
+			end
+		end)
+	)
+
+	-- Releases are handled even if `processed` is true, so a key/button can
+	-- never get "stuck" down because focus moved to the UI mid-hold.
+	table.insert(
+		connections,
+		UserInputService.InputEnded:Connect(function(input: InputObject)
+			local key = input.KeyCode
+			if input.UserInputType == Enum.UserInputType.MouseButton1 then
+				if KEYS.BlastMouse then
+					actions.releaseBlast()
+				end
+			elseif matches(KEYS.Blast, key) then
+				actions.releaseBlast()
+			elseif matches(KEYS.Up, key) then
+				actions.setVertical("keyUp", 0)
+			elseif matches(KEYS.Down, key) then
+				actions.setVertical("keyDown", 0)
+			end
+		end)
+	)
+
+	return connections
+end
+
+return InputController
+]]></ProtectedString></Properties></Item>
+</Item>
+</Item>
+</Item>
+</roblox>
