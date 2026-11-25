@@ -1,0 +1,46 @@
+# Builds the Roblox place file from source on every push, and lints the Luau.
+# Download the result from the Actions tab -> latest run -> Artifacts -> AllStar-place.
+# (Works from a phone browser; you still need Roblox Studio on a computer to open it.)
+name: Build All-Star place
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      ROJO_VERSION: 7.4.4
+      SELENE_VERSION: 0.28.0
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rojo and Selene
+        run: |
+          mkdir -p "$HOME/bin"
+          curl -sSL -o rojo.zip "https://github.com/rojo-rbx/rojo/releases/download/v${ROJO_VERSION}/rojo-${ROJO_VERSION}-linux-x86_64.zip"
+          curl -sSL -o selene.zip "https://github.com/Kampfkarren/selene/releases/download/${SELENE_VERSION}/selene-${SELENE_VERSION}-linux.zip"
+          unzip -o rojo.zip -d "$HOME/bin"
+          unzip -o selene.zip -d "$HOME/bin"
+          chmod +x "$HOME/bin/rojo" "$HOME/bin/selene"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Lint Luau (selene)
+        run: selene src
+
+      - name: Build place file (Rojo)
+        run: |
+          mkdir -p build
+          rojo build default.project.json --output build/AllStar.rbxlx
+
+      - name: Upload place file
+        uses: actions/upload-artifact@v4
+        with:
+          name: AllStar-place
+          path: build/AllStar.rbxlx
+          if-no-files-found: error

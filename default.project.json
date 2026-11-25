@@ -1,0 +1,63 @@
+{
+  "name": "AllStar",
+  "tree": {
+    "$className": "DataModel",
+
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "AllStar": {
+        "$path": "src/ReplicatedStorage/AllStar"
+      }
+    },
+
+    "ServerScriptService": {
+      "$className": "ServerScriptService",
+      "AllStarServer": {
+        "$path": "src/ServerScriptService/AllStarServer"
+      }
+    },
+
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "StarterPlayerScripts": {
+        "$className": "StarterPlayerScripts",
+        "AllStarClient": {
+          "$path": "src/StarterPlayer/StarterPlayerScripts/AllStarClient"
+        }
+      }
+    },
+
+    "Lighting": {
+      "$className": "Lighting",
+      "$properties": {
+        "ClockTime": 20.5,
+        "Brightness": 1.5
+      }
+    },
+
+    "Workspace": {
+      "$className": "Workspace",
+      "Baseplate": {
+        "$className": "Part",
+        "$properties": {
+          "Anchored": true,
+          "Locked": true,
+          "Size": [512, 16, 512],
+          "Position": [0, -8, 0],
+          "Color": [0.12, 0.12, 0.15],
+          "Material": "Slate"
+        }
+      },
+      "SpawnLocation": {
+        "$className": "SpawnLocation",
+        "$properties": {
+          "Anchored": true,
+          "Size": [12, 1, 12],
+          "Position": [0, 0.5, 0],
+          "Color": [0.27, 0.88, 1.0],
+          "Material": "Neon"
+        }
+      }
+    }
+  }
+}

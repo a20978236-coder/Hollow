@@ -1,0 +1,5 @@
+std = "roblox"
+
+[rules]
+# Luau type annotations make some shadowing intentional in builders.
+shadowing = "allow"
