@@ -1,0 +1,36 @@
+{
+  "name": "universal-modder-mobile",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:api": "npm run build && wrangler dev --port 8788",
+    "build": "tsc -b && vite build && node scripts/embed-assets.mjs && tsc -p worker/tsconfig.json",
+    "typecheck": "tsc -b && tsc -p worker/tsconfig.json",
+    "preview": "npm run build && wrangler dev --port 8788",
+    "deploy": "npm run build && wrangler deploy"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.14.0",
+    "idb-keyval": "^6.3.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-router-dom": "^7.18.7"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261125.1",
+    "@types/node": "^24.19.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "autoprefixer": "^10.7.0",
+    "oxlint": "^1.90.0",
+    "postcss": "^8.5.33",
+    "tailwindcss": "^3.4.17",
+    "typescript": "~7.0.2",
+    "vite": "^8.3.6",
+    "vite-plugin-pwa": "^2.0.0",
+    "wrangler": "^4.168.0"
+  }
+}

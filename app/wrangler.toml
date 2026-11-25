@@ -1,0 +1,9 @@
+name = "universal-modder-mobile"
+main = "worker/index.ts"
+compatibility_date = "2026-11-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+# Secrets (set in the Cloudflare dashboard or `wrangler secret put`):
+#   ANTHROPIC_API_KEY  - enables the AI Mod Creator
+#   FAL_KEY            - enables cloud asset generation (Phase 7)

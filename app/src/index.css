@@ -1,0 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: dark; -webkit-tap-highlight-color: transparent; }
+html, body, #root { height: 100%; }
+body {
+  @apply bg-ink-950 text-slate-200 antialiased font-sans;
+  background-image: radial-gradient(1200px 500px at 50% -200px, rgba(34,211,238,.10), transparent 60%);
+  background-attachment: fixed;
+  overscroll-behavior-y: none;
+  -webkit-text-size-adjust: 100%;
+}
+input, select, textarea, button { font-size: 16px; } /* prevents iOS zoom-on-focus */
+.pt-safe { padding-top: env(safe-area-inset-top); }
+.pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { scrollbar-width: none; }
+
+@layer components {
+  .card { @apply rounded-2xl border border-white/5 bg-ink-800/70 backdrop-blur-sm; }
+  .btn { @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold transition active:scale-[.97] disabled:opacity-40 disabled:active:scale-100; }
+  .btn-primary { @apply btn bg-gradient-to-r from-neon-400 to-neon-blue text-ink-950 shadow-glow; }
+  .btn-ghost { @apply btn border border-white/10 bg-ink-700/60 text-slate-100; }
+  .btn-danger { @apply btn border border-rose-500/30 bg-rose-500/10 text-rose-300; }
+  .input { @apply min-h-[44px] w-full rounded-xl border border-white/10 bg-ink-900 px-3 text-slate-100 placeholder:text-slate-500 focus:border-neon-400/60 focus:outline-none focus:ring-2 focus:ring-neon-400/20; }
+  .chip { @apply inline-flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-full border px-3 text-[13px] font-medium transition; }
+  .chip-on { @apply chip border-neon-400/60 bg-neon-400/15 text-neon-400; }
+  .chip-off { @apply chip border-white/10 bg-ink-800 text-slate-300; }
+  .label { @apply text-[11px] font-semibold uppercase tracking-[.14em] text-slate-500; }
+  .badge { @apply inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-semibold; }
+}
